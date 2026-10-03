@@ -2,15 +2,14 @@ import './globals.css'
 
 import {SpeedInsights} from '@vercel/speed-insights/next'
 import type {Metadata} from 'next'
-import {Inter, IBM_Plex_Mono} from 'next/font/google'
-import {draftMode} from 'next/headers'
+import {Space_Grotesk, DM_Sans, IBM_Plex_Mono} from 'next/font/google'
+import { draftMode } from 'next/headers'
+import type { ReactNode } from 'react'
 import {toPlainText} from 'next-sanity'
 import {VisualEditing} from 'next-sanity/visual-editing'
 import {Toaster} from 'sonner'
 
 import DraftModeToast from '@/app/components/DraftModeToast'
-import Footer from '@/app/components/Footer'
-import Header from '@/app/components/Header'
 import * as demo from '@/sanity/lib/demo'
 import {sanityFetch, SanityLive} from '@/sanity/lib/live'
 import {settingsQuery} from '@/sanity/lib/queries'
@@ -52,26 +51,40 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 }
 
-const inter = Inter({
-  variable: '--font-inter',
+// Design tokens — specs/05-DESIGN-SYSTEM.md §3.
+// Space Grotesk (display) + DM Sans (body) replace the template's Inter;
+// IBM Plex Mono (labels/kickers) is kept.
+const spaceGrotesk = Space_Grotesk({
+  variable: '--font-display',
   subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  display: 'swap',
+})
+
+const dmSans = DM_Sans({
+  variable: '--font-body',
+  subsets: ['latin'],
+  weight: ['400', '500'],
   display: 'swap',
 })
 
 const ibmPlexMono = IBM_Plex_Mono({
   variable: '--font-ibm-plex-mono',
-  weight: ['400'],
+  weight: ['400', '500'],
   subsets: ['latin'],
   display: 'swap',
 })
 
-export default async function RootLayout({children}: LayoutProps<'/'>) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
   const {isEnabled: isDraftMode} = await draftMode()
 
   return (
-    <html lang="en" className={`${inter.variable} ${ibmPlexMono.variable} bg-white text-black`}>
+    <html
+      lang="en"
+      className={`${spaceGrotesk.variable} ${dmSans.variable} ${ibmPlexMono.variable} bg-white text-black`}
+    >
       <body>
-        <section className="min-h-screen pt-24">
+        <section className="min-h-screen">
           {/* The <Toaster> component is responsible for rendering toast notifications used in /app/client-utils.ts and /app/components/DraftModeToast.tsx */}
           <Toaster />
           {isDraftMode && (
@@ -83,9 +96,7 @@ export default async function RootLayout({children}: LayoutProps<'/'>) {
           )}
           {/* The <SanityLive> component is responsible for making all sanityFetch calls in your application live, so should always be rendered. */}
           <SanityLive onError={handleError} />
-          <Header />
           <main className="">{children}</main>
-          <Footer />
         </section>
         <SpeedInsights />
       </body>

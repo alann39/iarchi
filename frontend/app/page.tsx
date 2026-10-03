@@ -1,96 +1,140 @@
-import {Suspense} from 'react'
-import Link from 'next/link'
-import {PortableText} from '@portabletext/react'
+import Link from 'next/link';
+import {Briefcase, Link2, Mail} from 'lucide-react';
+import {siBehance, siGithub, siGmail, siInstagram, siTelegram, siWhatsapp, siX} from 'simple-icons';
 
-import {AllPosts} from '@/app/components/Posts'
-import GetStartedCode from '@/app/components/GetStartedCode'
-import SideBySideIcons from '@/app/components/SideBySideIcons'
-import {settingsQuery} from '@/sanity/lib/queries'
-import {sanityFetch} from '@/sanity/lib/live'
-import {dataAttr} from '@/sanity/lib/utils'
+import {getPortfolio} from '@/lib/portfolio';
+import type {ContactData, PortfolioData} from '@/lib/portfolio';
 
+import {AvailabilityPill} from './components/chat/AvailabilityPill';
+import {HeroHeadline} from './components/chat/HeroHeadline';
+import {HomeClient} from './components/chat/HomeClient';
+
+// FALLBACK: default suggested questions when Sanity has none (Constitution §3).
+const FALLBACK_QUESTIONS = ['What have you built?', "What's your work history?", 'How can I contact you?'];
+
+const MONO = "font-['IBM_Plex_Mono',monospace]";
+
+/**
+ * Brand icon for a social platform. Mirrors the mapping in
+ * app/components/chat/cards/ContactCard.tsx (simple-icons per-brand imports;
+ * LinkedIn has no glyph in simple-icons v16 — use a stand-in).
+ */
+function SocialIcon({platform}: {platform: string}) {
+  const key = platform.toLowerCase();
+
+  if (key.includes('linkedin')) {
+    return <Briefcase size={20} aria-hidden="true" />;
+  }
+
+  const path =
+    key.includes('github')
+      ? siGithub.path
+      : key === 'x' || key.includes('twitter')
+        ? siX.path
+        : key.includes('instagram')
+          ? siInstagram.path
+          : key.includes('behance')
+            ? siBehance.path
+            : key.includes('whatsapp')
+              ? siWhatsapp.path
+              : key.includes('telegram')
+                ? siTelegram.path
+                : key.includes('gmail')
+                  ? siGmail.path
+                  : null;
+
+  if (path) {
+    return (
+      <svg width={20} height={20} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d={path} />
+      </svg>
+    );
+  }
+  if (key.includes('mail')) {
+    return <Mail size={20} aria-hidden="true" />;
+  }
+  return <Link2 size={20} aria-hidden="true" />;
+}
+
+/**
+ * Site header — specs/06-UI-SPEC.md §2.
+ * Left: social icons (20px, muted → ink on hover). Right: segmented
+ * [Home | Blog] with the active pill on Home (Blog links to /posts).
+ */
+function SiteHeader({socialLinks}: {socialLinks: ContactData[]}) {
+  return (
+    <header className="sticky top-0 z-20 bg-[#F4F5F6]/80 backdrop-blur-[16px]">
+      <div className="mx-auto flex w-full max-w-[720px] items-center justify-between px-5 py-3">
+        <div className="flex items-center gap-4">
+          {socialLinks.map((s) => (
+            <a
+              key={`${s.platform}-${s.url}`}
+              href={s.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={s.label}
+              className="text-[#6E7680] transition-colors duration-150 hover:text-[#101418]"
+            >
+              <SocialIcon platform={s.platform} />
+            </a>
+          ))}
+        </div>
+        <nav aria-label="Sections" className={`${MONO} relative flex rounded-full bg-[#E9EBED] p-[3px] text-[13px]`}>
+          <span
+            aria-hidden="true"
+            className="absolute bottom-[3px] left-[3px] top-[3px] w-[calc(50%-3px)] rounded-full bg-white shadow-[0_1px_3px_rgba(16,20,24,0.12)]"
+          />
+          <span className="relative z-10 rounded-full px-4 py-1.5 font-semibold text-[#101418]">Home</span>
+          <Link
+            href="/posts"
+            className="relative z-10 rounded-full px-4 py-1.5 text-[#6E7680] transition-colors hover:text-[#101418]"
+          >
+            Blog
+          </Link>
+        </nav>
+      </div>
+      <div className="mx-auto w-full max-w-[720px] px-5 pb-2.5">
+        <p className={`${MONO} text-[11px] uppercase tracking-[0.12em] text-[#6E7680]`}>Archi.dev — Portfolio</p>
+      </div>
+      <div aria-hidden="true" className="h-px bg-[rgba(16,20,24,0.12)]" />
+    </header>
+  );
+}
+
+/**
+ * Landing page — specs/06-UI-SPEC.md §1, specs/07-UX-FLOWS.md Flow 1.
+ * Server Component: fetches the portfolio once, then hands interactive
+ * state to the HomeClient wrapper. If Sanity is unreachable, degrades
+ * gracefully per E3 (never a blank page, never a crash).
+ */
 export default async function Page() {
-  const {data: settings} = await sanityFetch({
-    query: settingsQuery,
-  })
+  let portfolio: PortfolioData | null = null;
+  try {
+    portfolio = await getPortfolio();
+  } catch {
+    // E3: Sanity empty/unreachable — render the coming-soon state below.
+    portfolio = null;
+  }
+
+  const profile = portfolio?.profile ?? null;
+  const socialLinks = portfolio?.socialLinks ?? [];
+  const suggestedQuestions =
+    portfolio && portfolio.suggestedQuestions.length > 0 ? portfolio.suggestedQuestions : FALLBACK_QUESTIONS;
+  const cvUrl = portfolio?.siteSettings?.cvUrl;
+  const contactEmail = portfolio?.siteSettings?.contactEmail;
 
   return (
-    <>
-      <div className="relative">
-        <div className="relative bg-[url(/images/tile-1-black.png)] bg-size-[5px]">
-          <div className="bg-gradient-to-b from-white w-full h-full absolute top-0"></div>
-          <div className="container">
-            <div className="relative min-h-[40vh] mx-auto max-w-2xl pt-10 xl:pt-20 pb-30 space-y-6 lg:max-w-4xl lg:px-12 flex flex-col items-center justify-center">
-              <div className="flex flex-col gap-4 items-center">
-                <div className="text-md leading-6 prose uppercase py-1 px-3 bg-white font-mono italic">
-                  A starter template for
-                </div>
-                <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tighter text-black">
-                  <Link
-                    className="underline decoration-brand hover:text-brand underline-offset-8 hover:underline-offset-4 transition-all ease-out"
-                    href="https://sanity.io/"
-                  >
-                    Sanity
-                  </Link>
-                  +
-                  <Link
-                    className="underline decoration-black text-framework underline-offset-8 hover:underline-offset-4 transition-all ease-out"
-                    href="https://nextjs.org/"
-                  >
-                    Next.js
-                  </Link>
-                </h1>
-              </div>
-            </div>
-          </div>
+    <div className="min-h-screen bg-[#F4F5F6] font-['DM_Sans',sans-serif] text-[#101418]">
+      <SiteHeader socialLinks={socialLinks} />
+      <main className="mx-auto w-full max-w-[720px] px-5 pb-48">
+        <div className="pt-11">
+          <AvailabilityPill availability={profile?.availability ?? null} />
         </div>
-        <div className=" flex flex-col items-center">
-          <SideBySideIcons />
-          <div className="container relative mx-auto max-w-2xl pb-20 pt-10 space-y-6 lg:max-w-4xl lg:px-12 flex flex-col items-center">
-            <div className="prose sm:prose-lg md:prose-xl xl:prose-2xl text-gray-700 prose-a:text-gray-700 font-light text-center">
-              {settings?.description && (
-                <div
-                  data-sanity={dataAttr({
-                    id: settings._id,
-                    type: 'settings',
-                    path: 'description',
-                  }).toString()}
-                >
-                  <PortableText value={settings.description} />
-                </div>
-              )}
-              <div className="flex items-center flex-col gap-4">
-                <GetStartedCode />
-                <Link
-                  href="https://www.sanity.io/docs"
-                  className="inline-flex text-brand text-xs md:text-sm underline hover:text-gray-900"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Sanity Documentation
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    className="w-4 h-4 ml-1 inline"
-                    fill="currentColor"
-                  >
-                    <path d="M10 6V8H5V19H16V14H18V20C18 20.5523 17.5523 21 17 21H4C3.44772 21 3 20.5523 3 20V7C3 6.44772 3.44772 6 4 6H10ZM21 3V12L17.206 8.207L11.2071 14.2071L9.79289 12.7929L15.792 6.793L12 3H21Z"></path>
-                  </svg>
-                </Link>
-              </div>
-            </div>
-          </div>
+        <div className="mt-5">
+          <HeroHeadline profile={profile} />
         </div>
-      </div>
-      <div className="border-t border-gray-100 bg-gray-50">
-        <div className="container">
-          <aside className="py-12 sm:py-20">
-            <Suspense>
-              <AllPosts />
-            </Suspense>
-          </aside>
-        </div>
-      </div>
-    </>
-  )
+        <HomeClient suggestedQuestions={suggestedQuestions} cvUrl={cvUrl} contactEmail={contactEmail} />
+      </main>
+    </div>
+  );
 }

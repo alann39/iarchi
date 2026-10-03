@@ -25,8 +25,8 @@ export async function generateStaticParams() {
  * Generate metadata for the page.
  * Learn more: https://nextjs.org/docs/app/api-reference/functions/generate-metadata#generatemetadata-function
  */
-export async function generateMetadata(props: PageProps<'/[slug]'>): Promise<Metadata> {
-  const params = await props.params
+export async function generateMetadata({ params: paramsPromise }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const params = await paramsPromise
   const {data: page} = await sanityFetch({
     query: getPageQuery,
     params,
@@ -40,8 +40,8 @@ export async function generateMetadata(props: PageProps<'/[slug]'>): Promise<Met
   } satisfies Metadata
 }
 
-export default async function Page(props: PageProps<'/[slug]'>) {
-  const params = await props.params
+export default async function Page({ params: paramsPromise }: { params: Promise<{ slug: string }> }) {
+  const params = await paramsPromise
   const [{data: page}] = await Promise.all([sanityFetch({query: getPageQuery, params})])
 
   if (!page?._id) {
