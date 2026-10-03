@@ -3,6 +3,7 @@
 import type {
   ContactData,
   ExperienceCardData,
+  PickData,
   ProfileData,
   ProjectCardData,
   SkillGroupData,
@@ -19,6 +20,7 @@ export interface ToolResult {
   groups?: SkillGroupData[];
   contacts?: ContactData[];
   profile?: ProfileData;
+  picks?: PickData[];
 }
 
 /** A tool call executed server-side, delivered via SSE — specs/03-CONTRACTS.md §1. */

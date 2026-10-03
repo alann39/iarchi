@@ -18,6 +18,7 @@ import {checkRateLimit} from '@/lib/rate-limit'
 import type {
   ContactData,
   ExperienceCardData,
+  PickData,
   PortfolioData,
   ProfileData,
   ProjectCardData,
@@ -42,6 +43,7 @@ type ToolResult =
   | {groups: SkillGroupData[]}
   | {contacts: ContactData[]}
   | {profile: ProfileData | null}
+  | {picks: PickData[]}
 
 const FRIENDLY_LLM_ERROR =
   "Hmm, my brain buffered. Mind trying again?"
@@ -164,6 +166,21 @@ const TOOLS: ToolDefinition[] = [
       parameters: {type: 'object', properties: {}, additionalProperties: false},
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'show_taste',
+      description:
+        "Show Archi's personal favorites: music and movies. Call when the user asks about favorite music, songs, movies, films, or taste.",
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {type: 'string', description: 'Filter: "music" or "movie"'},
+        },
+        additionalProperties: false,
+      },
+    },
+  },
 ]
 
 // ---------------------------------------------------------------------------
@@ -204,6 +221,15 @@ function executeTool(
       return {name, args, result: {contacts: portfolio.socialLinks}}
     case 'show_profile':
       return {name, args, result: {profile: portfolio.profile}}
+    case 'show_taste': {
+      const category =
+        typeof args['category'] === 'string' ? args['category'].toLowerCase() : undefined
+      const filtered =
+        category === 'music' || category === 'movie'
+          ? portfolio.picks.filter((p) => p.category === category)
+          : portfolio.picks
+      return {name, args, result: {picks: filtered}}
+    }
     default:
       return null
   }

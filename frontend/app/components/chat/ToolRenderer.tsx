@@ -6,6 +6,7 @@ import {ContactCard} from './cards/ContactCard';
 import {ExperienceCard} from './cards/ExperienceCard';
 import {ProjectCard} from './cards/ProjectCard';
 import {SkillsCard} from './cards/SkillsCard';
+import {TasteCard} from './cards/TasteCard';
 import type {ToolEvent} from './types';
 
 export interface ToolRendererProps {
@@ -76,6 +77,28 @@ export function ToolRenderer({tool}: ToolRendererProps) {
       const profile = tool.result.profile;
       if (!profile) return null;
       return <ProfileBlock profile={profile} />;
+    }
+    case 'show_taste': {
+      const picks = tool.result.picks ?? [];
+      if (picks.length === 0) return null;
+      const music = picks.filter((p) => p.category === 'music');
+      const movies = picks.filter((p) => p.category !== 'music');
+      const Group = ({label, items}: {label: string; items: typeof picks}) => (
+        <div>
+          <p className={`${MONO} mb-1 text-[11px] uppercase tracking-[0.12em] text-[#6E7680]`}>
+            {label}
+          </p>
+          {items.map((pick) => (
+            <TasteCard key={`${pick.category}-${pick.title}`} pick={pick} />
+          ))}
+        </div>
+      );
+      return (
+        <div className="flex flex-col gap-5">
+          {music.length > 0 && <Group label="♪ Music" items={music} />}
+          {movies.length > 0 && <Group label="▸ Movies" items={movies} />}
+        </div>
+      );
     }
     default:
       return null;

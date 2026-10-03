@@ -54,6 +54,17 @@ export interface SiteSettingsData {
   contactEmail?: string
 }
 
+export interface PickData {
+  category: 'music' | 'movie'
+  title: string
+  creator: string
+  year?: string
+  note?: string
+  previewUrl?: string
+  artworkUrl?: string
+  spotifyUrl?: string
+}
+
 export interface PortfolioData {
   profile: ProfileData | null
   projects: ProjectCardData[]
@@ -62,6 +73,7 @@ export interface PortfolioData {
   socialLinks: ContactData[]
   suggestedQuestions: string[]
   siteSettings: SiteSettingsData | null
+  picks: PickData[]
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +108,10 @@ const suggestedQuestionsQuery = defineQuery(`*[_type == "suggestedQuestion"] | o
 
 const siteSettingsQuery = defineQuery(`*[_type == "siteSettings"][0]{
   "cvUrl": cvFile.asset->url, contactEmail
+}`)
+
+const picksQuery = defineQuery(`*[_type == "pick"] | order(order asc){
+  category, title, creator, year, note, previewUrl, artworkUrl, spotifyUrl
 }`)
 
 // ---------------------------------------------------------------------------
@@ -152,6 +168,17 @@ interface RawSiteSettings {
   contactEmail: string | null
 }
 
+interface RawPick {
+  category: string
+  title: string
+  creator: string
+  year: number | null
+  note: string | null
+  previewUrl: string | null
+  artworkUrl: string | null
+  spotifyUrl: string | null
+}
+
 function toProjectCardData(raw: RawProject): ProjectCardData {
   return {
     title: raw.title,
@@ -201,6 +228,19 @@ function toSiteSettingsData(raw: RawSiteSettings): SiteSettingsData {
   }
 }
 
+function toPickData(raw: RawPick): PickData {
+  return {
+    category: raw.category === 'movie' ? 'movie' : 'music',
+    title: raw.title,
+    creator: raw.creator,
+    year: raw.year != null ? String(raw.year) : undefined,
+    note: raw.note ?? undefined,
+    previewUrl: raw.previewUrl ?? undefined,
+    artworkUrl: raw.artworkUrl ?? undefined,
+    spotifyUrl: raw.spotifyUrl ?? undefined,
+  }
+}
+
 async function fetchPortfolio(): Promise<PortfolioData> {
   const [
     rawProfile,
@@ -210,6 +250,7 @@ async function fetchPortfolio(): Promise<PortfolioData> {
     rawSocialLinks,
     rawQuestions,
     rawSettings,
+    rawPicks,
   ] = await Promise.all([
     client.fetch<RawProfile | null>(profileQuery),
     client.fetch<RawProject[]>(projectsQuery),
@@ -218,6 +259,7 @@ async function fetchPortfolio(): Promise<PortfolioData> {
     client.fetch<RawSocialLink[]>(socialLinksQuery),
     client.fetch<RawSuggestedQuestion[]>(suggestedQuestionsQuery),
     client.fetch<RawSiteSettings | null>(siteSettingsQuery),
+    client.fetch<RawPick[]>(picksQuery),
   ])
 
   return {
@@ -228,6 +270,7 @@ async function fetchPortfolio(): Promise<PortfolioData> {
     socialLinks: rawSocialLinks.map(toContactData),
     suggestedQuestions: rawQuestions.map((q: RawSuggestedQuestion) => q.question),
     siteSettings: rawSettings ? toSiteSettingsData(rawSettings) : null,
+    picks: rawPicks.map(toPickData),
   }
 }
 

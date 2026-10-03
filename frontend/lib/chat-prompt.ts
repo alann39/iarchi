@@ -11,10 +11,11 @@ const AVAILABLE_TOOLS: readonly string[] = [
   'show_skills — args: {}',
   'show_contact — args: {}',
   'show_profile — args: {}',
+  'show_taste — args: { category?: "music" | "movie" }',
 ]
 
 function renderFacts(portfolio: PortfolioData): string {
-  const {profile, projects, experience, skillGroups, socialLinks, siteSettings} = portfolio
+  const {profile, projects, experience, skillGroups, socialLinks, siteSettings, picks} = portfolio
   const sections: string[] = []
 
   if (profile) {
@@ -71,6 +72,18 @@ function renderFacts(portfolio: PortfolioData): string {
   }
   if (contactLines.length > 0) {
     sections.push('CONTACT:\n' + contactLines.join('\n'))
+  }
+
+  if (picks.length > 0) {
+    sections.push(
+      'FAVORITES (music & movies — use show_taste to render cards):\n' +
+        picks
+          .map(
+            (p) =>
+              `- [${p.category}] ${p.title} — ${p.creator}${p.year ? ` (${p.year})` : ''}${p.note ? `: ${p.note}` : ''}`,
+          )
+          .join('\n'),
+    )
   }
 
   return sections.join('\n\n')

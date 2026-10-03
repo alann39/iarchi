@@ -90,8 +90,13 @@
 - **Description:** Di bawah breakpoint 1100px, dock menjadi bottom sheet full-width (pola referensi).
 - **Verification Command:** build hijau + verifikasi visual manual (DevTools responsive).
 
-### [TASK-15+] Playful extras (P2 — opsional)
-- Music player, mini-game, glossary popups. Spec menyusul saat diputuskan. Arsitektur tidak perlu berubah.
+### [TASK-15] Personal taste blocks (P2 — 2026-10-03, Archi approved)
+
+"Apa music favorite" + "Best movie ever for me" sebagai jawaban chat yang personal.
+- Schema `pick` (category music/movie, title, creator, year, note, previewUrl, artworkUrl, spotifyUrl, order) — di CMS.
+- Music PLAYABLE: 30s iTunes Search API preview (tanpa key) + custom player Machine Room (tombol kotak, progress 2px, mono time). Opsi B (Spotify embed) ditolak: iframe tak bisa di-style. Opsi C (upload MP3) ditolak: butuh file user.
+- Tool `show_taste` (args category?) + `TasteCard` (+`PreviewPlayer`) + prompt FACTS section. Dummy-seeded; Archi ganti dengan favorit asli via CMS.
+- Easter eggs: DITUNDA phase ini (keputusan Archi 2026-10-03).
 
 ---
 
