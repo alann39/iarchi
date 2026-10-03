@@ -1,3 +1,4 @@
+import {pick} from './documents/pick'
 import {person} from './documents/person'
 import {page} from './documents/page'
 import {post} from './documents/post'
@@ -32,6 +33,7 @@ export const schemaTypes = [
   skillGroup,
   socialLink,
   suggestedQuestion,
+  pick,
   // Objects
   button,
   blockContent,
