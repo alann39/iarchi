@@ -16,18 +16,23 @@
 **Kicker:** di bawah header, mono 11px: `ARCHI.DEV — PORTFOLIO` + timestamp/jam live (mono, seperti radio di referensi framer — detail hidup yang murah).
 **States:** `default` | `scrolled` (backdrop-blur 16px + hairline bottom).
 
-## 3. AvailabilityStatus
+## 3. AvailabilityStatus — merged into hero kicker (direction A, 2026-10-03)
 
-**Bukan** pulsing dot (anti-pattern untuk konten non-live). Sebagai gantinya:
-kicker mono uppercase: `■ AVAILABLE FOR WORK` — kotak 8px `--accent`, teks `--ink`, `letter-spacing: 0.12em`. Crisp, tanpa animasi.
-**States:** `default` | `hidden` (data kosong → sembunyikan, jangan placeholder).
+**Bukan** pulsing dot (anti-pattern untuk konten non-live), dan **bukan** pill terpisah —
+nol dari 8 referensi minimalist punya availability pill di hero. Availability tampil inline
+di kicker hero: `■ {NAME} — AI PORTFOLIO · {AVAILABILITY}` — kotak 8px `--accent`,
+mono 11px uppercase, `letter-spacing: 0.12em`. Crisp, tanpa animasi.
+**States:** `default` | `hidden` (data kosong → kicker tanpa segmen availability, jangan placeholder).
 
-## 4. HeroHeadline
+## 4. HeroHeadline — direction A "The Input Is the Hero" (2026-10-03)
 
-Space Grotesk 700, 32px desktop / 26px mobile, `letter-spacing: -0.02em`:
-`"{name} — {role}."` + satu baris sub DM Sans `--muted`.
-**Reveal:** kata-per-kata blur+rise, stagger 60ms, **sekali saja** (bukan shine sweep).
-**States:** `default` saja.
+Minimal by construction, ±9 kata above the fold. **Tidak ada paragraf bio** — bio didelegasikan
+ke tombol "Read the full story" dan chat itu sendiri (referensi: rauno.me, applicaiton.vercel.app).
+- Kicker: `■ {name} — AI portfolio · {availability}` (lihat §3).
+- H1: `"Ask me / anything."` — Space Grotesk 700, 44px desktop / 34px mobile, `letter-spacing: -0.02em`, `leading: 1.02`.
+- Sub satu baris: `"This site is a conversation, not a résumé."` — DM Sans 15px `--muted`.
+**Reveal:** staggered blur+rise, 60ms steps, **sekali saja** (bukan shine sweep).
+**States:** `default` | `E3` (profil kosong → "Portfolio content coming soon.").
 
 ## 5. SuggestedChips (bukan kartu)
 

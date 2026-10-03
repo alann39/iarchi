@@ -1,7 +1,6 @@
 import {getPortfolio} from '@/lib/portfolio';
 import type {PortfolioData} from '@/lib/portfolio';
 
-import {AvailabilityPill} from './components/chat/AvailabilityPill';
 import {HeroHeadline} from './components/chat/HeroHeadline';
 import {HomeClient} from './components/chat/HomeClient';
 import {Reveal} from './components/Reveal';
@@ -38,9 +37,6 @@ export default async function Page() {
     <div className="min-h-screen bg-paper font-['DM_Sans',sans-serif] text-ink">
       <main className="mx-auto w-full max-w-[720px] px-5 pb-48">
         <Reveal className="pt-11" delay={0}>
-          <AvailabilityPill availability={profile?.availability ?? null} />
-        </Reveal>
-        <Reveal className="mt-5" delay={60}>
           <HeroHeadline profile={profile} />
         </Reveal>
         <HomeClient suggestedQuestions={suggestedQuestions} cvUrl={cvUrl} contactEmail={contactEmail} />

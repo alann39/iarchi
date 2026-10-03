@@ -6,9 +6,11 @@ interface HeroHeadlineProps {
 }
 
 /**
- * Hero headline — specs/06-UI-SPEC.md §4.
- * "{name} — {tagline}." in Space Grotesk 700 + bio subline in DM Sans muted.
- * When no profile data exists (07-UX-FLOWS.md E3), shows the coming-soon state.
+ * Hero headline — direction A ("The Input Is the Hero"), approved 2026-10-03.
+ * Minimal by construction: a mono kicker (name + availability inline, no
+ * separate pill), a two-word H1, and a one-line sub. The bio paragraph is
+ * gone — the story lives behind "Read the full story" and the chat itself.
+ * Total: ~9 words above the fold.
  */
 export function HeroHeadline({profile}: HeroHeadlineProps) {
   if (!profile) {
@@ -24,12 +26,22 @@ export function HeroHeadline({profile}: HeroHeadlineProps) {
     );
   }
 
+  const availability = profile.availability?.trim();
+
   return (
     <div>
-      <h1 className="font-['Space_Grotesk',sans-serif] text-[32px] font-bold leading-[1.05] tracking-[-0.02em] text-[#101418] max-md:text-[26px]">
-        {profile.name} — {profile.tagline}
+      <p className="flex items-center gap-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] uppercase tracking-[0.12em] text-[#101418]">
+        <span aria-hidden="true" className="inline-block h-2 w-2 shrink-0 bg-[#FF4D00]" />
+        {profile.name} — AI portfolio{availability ? ` · ${availability}` : ''}
+      </p>
+      <h1 className="mt-[18px] font-['Space_Grotesk',sans-serif] text-[44px] font-bold leading-[1.02] tracking-[-0.02em] text-[#101418] max-md:text-[34px]">
+        Ask me
+        <br />
+        anything.
       </h1>
-      <p className="mt-3 max-w-[65ch] text-[16px] leading-[1.6] text-[#6E7680]">{profile.bio}</p>
+      <p className="mt-3.5 text-[15px] leading-[1.6] text-[#6E7680]">
+        This site is a conversation, not a r&eacute;sum&eacute;.
+      </p>
     </div>
   );
 }
