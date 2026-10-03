@@ -80,20 +80,36 @@ const POSTS = [
 ];
 
 export async function POST(req: NextRequest) {
-  if (req.nextUrl.searchParams.get('key') !== SEED_KEY) {
-    return Response.json({error: 'forbidden'}, {status: 403});
+  try {
+    if (req.nextUrl.searchParams.get('key') !== SEED_KEY) {
+      return Response.json({error: 'forbidden'}, {status: 403});
+    }
+    const token = process.env.SANITY_API_READ_TOKEN;
+    const projectId = process.env.NEXT_PUBLIC_SANITY_PROJECT_ID;
+    if (!token || !projectId) {
+      return Response.json({error: 'sanity not configured'}, {status: 500});
+    }
+    const mutations = POSTS.map((p) => ({create: {_type: 'post', ...p}}));
+    const url = `https://${projectId}.api.sanity.com/v2025-09-25/data/mutate/production`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+        body: JSON.stringify({mutations}),
+      });
+    } catch (e) {
+      return Response.json(
+        {error: 'fetch threw', message: e instanceof Error ? e.message : String(e), url: url.replace(projectId, '<pid>')},
+        {status: 500},
+      );
+    }
+    const data = await res.json().catch(() => null);
+    return Response.json({ok: res.ok, status: res.status, data}, {status: res.ok ? 200 : 500});
+  } catch (e) {
+    return Response.json(
+      {error: 'handler threw', message: e instanceof Error ? `${e.name}: ${e.message}` : String(e)},
+      {status: 500},
+    );
   }
-  const token = process.env.SANITY_API_READ_TOKEN;
-  const projectId = process.env.NEXT_PUBLIC_SANITY_PROJECT_ID;
-  if (!token || !projectId) {
-    return Response.json({error: 'sanity not configured'}, {status: 500});
-  }
-  const mutations = POSTS.map((p) => ({create: {_type: 'post', ...p}}));
-  const res = await fetch(`https://${projectId}.api.sanity.com/v2025-09-25/data/mutate/production`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
-    body: JSON.stringify({mutations}),
-  });
-  const data = await res.json().catch(() => null);
-  return Response.json({ok: res.ok, status: res.status, data}, {status: res.ok ? 200 : 500});
 }
