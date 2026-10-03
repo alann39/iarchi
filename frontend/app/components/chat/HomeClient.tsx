@@ -211,7 +211,14 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
       streamingIdRef.current = aiMsg.id;
       setMessagesSync([...prev, userMsg, aiMsg]);
       setSending(true);
-      return [...prev.map((m) => ({role: m.role, content: m.content})), {role: 'user' as const, content: trimmed}];
+      // The in-flight assistant placeholder (content '') is UI-only — never
+      // send it as API context (the API rejects empty content with 400).
+      return [
+        ...prev
+          .filter((m) => m.content.length > 0)
+          .map((m) => ({role: m.role, content: m.content})),
+        {role: 'user' as const, content: trimmed},
+      ];
     },
     [settleStreaming],
   );
@@ -360,6 +367,7 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
         onError={handleDockError}
         cvUrl={cvUrl}
         contactEmail={contactEmail}
+        busy={sending}
       />
     </>
   );

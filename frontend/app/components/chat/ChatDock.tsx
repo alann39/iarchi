@@ -23,6 +23,13 @@ export interface ChatDockProps {
   cvUrl?: string;
   /** Contact email from siteSettings; when missing, the Let's Talk button is hidden. */
   contactEmail?: string;
+  /**
+   * True while a stream started outside the dock (suggestion chip, full-story
+   * button, retry) is in flight. The dock's own `sending` state doesn't cover
+   * those, so without this the textarea stays enabled and a send would include
+   * the in-flight empty assistant placeholder in history → API 400.
+   */
+  busy?: boolean;
 }
 
 const PLACEHOLDERS = [
@@ -118,6 +125,7 @@ export function ChatDock({
   onError,
   cvUrl,
   contactEmail,
+  busy = false,
 }: ChatDockProps) {
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
@@ -126,7 +134,10 @@ export function ChatDock({
   const dockRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const canSend = value.trim().length > 0 && !sending;
+  // Combined busy state: own send OR an externally-started stream (chip /
+  // full-story / retry). The dock must not send while either is in flight.
+  const isBusy = sending || busy;
+  const canSend = value.trim().length > 0 && !isBusy;
 
   // 150ms shake on error — specs/06-UI-SPEC.md §6 state matrix.
   const shake = useCallback(() => {
@@ -191,7 +202,7 @@ export function ChatDock({
 
   const handleSend = useCallback(async () => {
     const text = value.trim();
-    if (!text || sending) return;
+    if (!text || isBusy) return;
     onUserSend(text);
     setValue('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -199,8 +210,12 @@ export function ChatDock({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    // Never send the in-flight assistant placeholder (content '') as context —
+    // the API rejects empty content with 400.
     const history = [
-      ...messages.map((m) => ({role: m.role, content: m.content})),
+      ...messages
+        .filter((m) => m.content.length > 0)
+        .map((m) => ({role: m.role, content: m.content})),
       {role: 'user' as const, content: text},
     ];
     try {
@@ -225,7 +240,7 @@ export function ChatDock({
     } finally {
       abortRef.current = null;
     }
-  }, [value, sending, messages, onUserSend, onDelta, onTool, onDone, fail]);
+  }, [value, isBusy, messages, onUserSend, onDelta, onTool, onDone, fail]);
 
   // Abort in-flight request on unmount.
   useEffect(() => {
@@ -234,7 +249,7 @@ export function ChatDock({
 
   // Placeholders-and-vanish rotation — only while idle and empty.
   useEffect(() => {
-    if (sending || value !== '') return;
+    if (isBusy || value !== '') return;
     let phrase = 0;
     let chars = 0;
     let timer: ReturnType<typeof setTimeout>;
@@ -269,7 +284,7 @@ export function ChatDock({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sending, value]);
+  }, [isBusy, value]);
 
   const autosize = () => {
     const el = textareaRef.current;
@@ -312,7 +327,7 @@ export function ChatDock({
           ref={textareaRef}
           rows={1}
           value={value}
-          disabled={sending}
+          disabled={isBusy}
           onChange={(e) => {
             setValue(e.target.value);
             autosize();
