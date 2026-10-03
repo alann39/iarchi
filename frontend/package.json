@@ -21,6 +21,7 @@
     "@vercel/speed-insights": "^2.0.0",
     "autoprefixer": "^10.5.0",
     "date-fns": "^4.4.0",
+    "lucide-react": "^1.51.0",
     "next": "^16.2.7",
     "next-sanity": "^13.0.8",
     "postcss": "^8.5.18",
@@ -28,6 +29,7 @@
     "react-dom": "^19.2.7",
     "sanity": "^5.28.0",
     "sanity-image": "^1.1.0",
+    "simple-icons": "^16.33.0",
     "sonner": "^2.0.7",
     "tailwindcss": "^4.3.0"
   },

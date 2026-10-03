@@ -1,9 +1,16 @@
 import {person} from './documents/person'
 import {page} from './documents/page'
 import {post} from './documents/post'
+import {project} from './documents/project'
+import {experience} from './documents/experience'
+import {skillGroup} from './documents/skillGroup'
+import {socialLink} from './documents/socialLink'
+import {suggestedQuestion} from './documents/suggestedQuestion'
 import {callToAction} from './objects/callToAction'
 import {infoSection} from './objects/infoSection'
 import {settings} from './singletons/settings'
+import {profile} from './singletons/profile'
+import {siteSettings} from './singletons/siteSettings'
 import {link} from './objects/link'
 import {blockContent} from './objects/blockContent'
 import button from './objects/button'
@@ -14,10 +21,17 @@ import {blockContentTextOnly} from './objects/blockContentTextOnly'
 export const schemaTypes = [
   // Singletons
   settings,
+  profile,
+  siteSettings,
   // Documents
   page,
   post,
   person,
+  project,
+  experience,
+  skillGroup,
+  socialLink,
+  suggestedQuestion,
   // Objects
   button,
   blockContent,
