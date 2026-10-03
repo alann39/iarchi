@@ -33,11 +33,13 @@ Content-Type: application/json
 { "type": "done" }
 
 // error (menggantikan stream)
-{ "type": "error", "code": "RATE_LIMITED" | "LLM_ERROR" | "BAD_REQUEST",
+{ "type": "error", "code": "RATE_LIMITED" | "LLM_ERROR" | "BAD_REQUEST" | "BAD_RESPONSE",
   "message": "Ramah, tanpa detail internal." }
 ```
 
 **Rate limit**: 20 req/menit/IP → `429` dengan `{type:"error", code:"RATE_LIMITED"}`.
+
+**BAD_RESPONSE**: server mendeteksi chain-of-thought leak di stream (pola "thinking process" dsb.) → stream diabort, client **mengganti** partial content dengan pesan ramah + Retry (bukan menampilkannya).
 
 ## 2. LLM Tools
 

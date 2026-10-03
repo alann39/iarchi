@@ -141,10 +141,14 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
       const friendly = code === 'RATE_LIMITED' ? FRIENDLY_RATE_LIMITED : message;
       if (id) {
         // Keep any partial content (E10); otherwise show the friendly message.
+        // BAD_RESPONSE (chain-of-thought leak guard): never keep partial
+        // content — the server aborted the stream, so replace it outright.
         // MessageBubble renders the Retry affordance for error status.
         setMessagesSync(
           messagesRef.current.map((m) =>
-            m.id === id ? {...m, status: 'error', errorCode: code, content: m.content || friendly} : m,
+            m.id === id
+              ? {...m, status: 'error', errorCode: code, content: code === 'BAD_RESPONSE' ? friendly : m.content || friendly}
+              : m,
           ),
         );
       } else {

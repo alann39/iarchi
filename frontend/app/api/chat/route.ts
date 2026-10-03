@@ -34,7 +34,7 @@ type SseEvent =
   | {type: 'text'; delta: string}
   | {type: 'tool'; name: string; args: Record<string, unknown>; result: ToolResult}
   | {type: 'done'}
-  | {type: 'error'; code: 'RATE_LIMITED' | 'LLM_ERROR' | 'BAD_REQUEST'; message: string}
+  | {type: 'error'; code: 'RATE_LIMITED' | 'LLM_ERROR' | 'BAD_REQUEST' | 'BAD_RESPONSE'; message: string}
 
 type ToolResult =
   | {projects: ProjectCardData[]}
@@ -266,6 +266,86 @@ async function* readSseChunks(
 }
 
 // ---------------------------------------------------------------------------
+// Chain-of-thought leak guard — the free-tier model occasionally emits its
+// reasoning ("Here's a thinking process: …") as answer text. Three layers:
+//  1. Prompt RULES forbid revealing thinking (lib/chat-prompt.ts).
+//  2. Streaming filter below strips <think>...</think> blocks (reasoning models).
+//  3. Leak detector aborts the stream when the head looks like meta-reasoning.
+// ---------------------------------------------------------------------------
+
+interface ThinkFilterState {
+  inThink: boolean
+  carry: string
+}
+
+/** Longest tag fragment we may need to bridge across chunk boundaries. */
+const THINK_TAIL = 16
+
+function createThinkFilter(): ThinkFilterState {
+  return {inThink: false, carry: ''}
+}
+
+/**
+ * Streaming-safe removal of <think>…</think> blocks. Returns the safe-to-emit
+ * portion of this chunk; a short tail is held back to catch tags split across
+ * chunk boundaries. Call flushThinkFilter() when the stream ends.
+ */
+function filterThinkChunk(state: ThinkFilterState, delta: string): string {
+  const openRe = /<think(?:ing)?[\s>]/i
+  const closeRe = /<\/(?:think|thinking)\s*>/i
+  let text = state.carry + delta
+  let out = ''
+  for (;;) {
+    if (state.inThink) {
+      const close = text.match(closeRe)
+      if (!close || close.index === undefined) {
+        state.carry = text.slice(-THINK_TAIL)
+        return out
+      }
+      text = text.slice(close.index + close[0].length)
+      state.inThink = false
+      continue
+    }
+    const open = text.match(openRe)
+    if (!open || open.index === undefined) {
+      const emitUpTo = Math.max(0, text.length - THINK_TAIL)
+      out += text.slice(0, emitUpTo)
+      state.carry = text.slice(emitUpTo)
+      return out
+    }
+    out += text.slice(0, open.index)
+    text = text.slice(open.index)
+    state.inThink = true
+  }
+}
+
+/** Flush the held-back tail at stream end; drops it if still inside <think>. */
+function flushThinkFilter(state: ThinkFilterState): string {
+  const tail = state.carry
+  state.carry = ''
+  if (state.inThink) return ''
+  return /<think(?:ing)?[\s>]/i.test(tail) ? '' : tail
+}
+
+/**
+ * High-precision markers of untagged chain-of-thought leakage (observed in
+ * production 2026-10-03: "Here's a thinking process: 1. Analyze User Input…").
+ * A legitimate ≤120-word portfolio answer never contains these.
+ */
+const LEAK_PATTERNS: RegExp[] = [
+  /thinking process/i,
+  /analy[sz]e (the |user )?input/i,
+  /check available tools/i,
+  /the system (says|instructs|tells)/i,
+  /as an ai language model/i,
+  /"FACTS"/,
+]
+
+function looksLikeLeak(text: string): boolean {
+  return LEAK_PATTERNS.some((re) => re.test(text))
+}
+
+// ---------------------------------------------------------------------------
 // POST handler
 // ---------------------------------------------------------------------------
 
@@ -360,11 +440,29 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
 
         const toolCalls: AccumulatedToolCall[] = []
+        const thinkFilter = createThinkFilter()
+        let head = '' // cleaned-text head for leak detection (capped)
+        let leakCheckedEarly = false
+        let leaked = false
+        const LEAK_CHECK_AT = 200
+        const HEAD_CAP = 600
+
         for await (const chunk of readSseChunks(res.body)) {
           const delta = chunk.choices?.[0]?.delta
           if (!delta) continue
           if (typeof delta.content === 'string' && delta.content.length > 0) {
-            send({type: 'text', delta: delta.content})
+            const clean = filterThinkChunk(thinkFilter, delta.content)
+            if (clean.length > 0) {
+              if (head.length < HEAD_CAP) head += clean
+              if (!leakCheckedEarly && head.length >= LEAK_CHECK_AT) {
+                leakCheckedEarly = true
+                if (looksLikeLeak(head)) {
+                  leaked = true
+                  break
+                }
+              }
+              send({type: 'text', delta: clean})
+            }
           }
           for (const tc of delta.tool_calls ?? []) {
             const idx = tc.index ?? 0
@@ -377,6 +475,30 @@ export async function POST(req: NextRequest): Promise<Response> {
             if (tc.function?.name) acc.name = tc.function.name
             if (tc.function?.arguments) acc.arguments += tc.function.arguments
           }
+        }
+
+        // Flush the think-filter tail, then run the final leak check for
+        // short responses that never reached the early-check threshold.
+        const tail = flushThinkFilter(thinkFilter)
+        if (!leaked) {
+          if (head.length < HEAD_CAP) head += tail
+          if (looksLikeLeak(head)) {
+            leaked = true
+          } else if (tail.length > 0) {
+            send({type: 'text', delta: tail})
+          }
+        }
+
+        if (leaked) {
+          // Never surface chain-of-thought: the client replaces any partial
+          // content with the friendly message on BAD_RESPONSE.
+          try {
+            aborter.abort()
+          } catch {
+            // ignore — stream is ending anyway
+          }
+          send({type: 'error', code: 'BAD_RESPONSE', message: FRIENDLY_LLM_ERROR})
+          return
         }
 
         // Execute accumulated tool calls server-side, in order.
