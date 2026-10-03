@@ -140,16 +140,21 @@ export function ChatDock({
   const canSend = value.trim().length > 0 && !isBusy;
 
   // 150ms shake on error — specs/06-UI-SPEC.md §6 state matrix.
+  // Skipped under prefers-reduced-motion.
   const shake = useCallback(() => {
-    // translateX(-50%) is baked in: the dock is centered via left-1/2.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // translateX(-50%) is baked in when the dock is centered via left-1/2;
+    // below 1100px it's a full-width bottom sheet with no centering offset.
+    const centered = !window.matchMedia('(max-width: 1100px)').matches;
+    const base = centered ? 'translateX(-50%) ' : '';
     dockRef.current?.animate(
       [
-        {transform: 'translateX(-50%) translateX(0px)'},
-        {transform: 'translateX(-50%) translateX(-6px)'},
-        {transform: 'translateX(-50%) translateX(6px)'},
-        {transform: 'translateX(-50%) translateX(-4px)'},
-        {transform: 'translateX(-50%) translateX(4px)'},
-        {transform: 'translateX(-50%) translateX(0px)'},
+        {transform: `${base}translateX(0px)`},
+        {transform: `${base}translateX(-6px)`},
+        {transform: `${base}translateX(6px)`},
+        {transform: `${base}translateX(-4px)`},
+        {transform: `${base}translateX(4px)`},
+        {transform: `${base}translateX(0px)`},
       ],
       {duration: 150, easing: 'ease-out'},
     );
@@ -301,8 +306,11 @@ export function ChatDock({
   };
 
   return (
-    <div ref={dockRef} className="fixed bottom-6 left-1/2 z-40 w-[min(680px,calc(100%-32px))] -translate-x-1/2">
-      <div className="flex items-center gap-2 rounded-full border border-[rgba(16,20,24,0.08)] bg-[rgba(255,255,255,0.72)] py-2 pl-2 pr-2 shadow-[0_8px_32px_rgba(16,20,24,0.08)] backdrop-blur-[16px] backdrop-saturate-[160%]">
+    <div
+      ref={dockRef}
+      className="fixed bottom-6 left-1/2 z-40 w-[min(680px,calc(100%-32px))] -translate-x-1/2 max-[1100px]:bottom-0 max-[1100px]:left-0 max-[1100px]:w-full max-[1100px]:translate-x-0"
+    >
+      <div className="flex items-center gap-2 rounded-full border border-[rgba(16,20,24,0.08)] bg-[rgba(255,255,255,0.72)] py-2 pl-2 pr-2 shadow-[0_8px_32px_rgba(16,20,24,0.08)] backdrop-blur-[16px] backdrop-saturate-[160%] max-[1100px]:rounded-[20px_20px_0_0] max-[1100px]:border-x-0 max-[1100px]:border-b-0 max-[1100px]:px-3 max-[1100px]:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
           onClick={handleDownloadCV}

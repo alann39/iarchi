@@ -5,49 +5,37 @@ import type {Metadata} from 'next'
 import {Space_Grotesk, DM_Sans, IBM_Plex_Mono} from 'next/font/google'
 import { draftMode } from 'next/headers'
 import type { ReactNode } from 'react'
-import {toPlainText} from 'next-sanity'
 import {VisualEditing} from 'next-sanity/visual-editing'
 import {Toaster} from 'sonner'
 
 import DraftModeToast from '@/app/components/DraftModeToast'
-import * as demo from '@/sanity/lib/demo'
-import {sanityFetch, SanityLive} from '@/sanity/lib/live'
-import {settingsQuery} from '@/sanity/lib/queries'
-import {resolveOpenGraphImage} from '@/sanity/lib/utils'
+import {SiteHeader} from '@/app/components/SiteHeader'
+import {SanityLive} from '@/sanity/lib/live'
 import {handleError} from '@/app/client-utils'
+import {getPortfolio} from '@/lib/portfolio'
 
 /**
- * Generate metadata for the page.
- * Learn more: https://nextjs.org/docs/app/api-reference/functions/generate-metadata#generatemetadata-function
+ * Site metadata from Archi's portfolio content (never template demo text).
+ * Falls back to a neutral default when Sanity is unreachable (E3).
  */
 export async function generateMetadata(): Promise<Metadata> {
-  const {data: settings} = await sanityFetch({
-    query: settingsQuery,
-    // Metadata should never contain stega
-    stega: false,
-  })
-  const title = settings?.title || demo.title
-  const description = settings?.description || demo.description
-
-  const ogImage = resolveOpenGraphImage(settings?.ogImage)
-  let metadataBase: URL | undefined = undefined
+  let title = 'Archi — Portfolio'
+  let description = 'AI-chat-first portfolio of Archi. Ask about projects, experience, and how to reach him.'
   try {
-    metadataBase = settings?.ogImage?.metadataBase
-      ? new URL(settings.ogImage.metadataBase)
-      : undefined
+    const portfolio = await getPortfolio()
+    if (portfolio.profile) {
+      title = `${portfolio.profile.name} — ${portfolio.profile.tagline}`
+      description = portfolio.profile.bio
+    }
   } catch {
-    // ignore
+    // E3: keep the neutral fallback.
   }
   return {
-    metadataBase,
     title: {
       template: `%s | ${title}`,
       default: title,
     },
-    description: toPlainText(description),
-    openGraph: {
-      images: ogImage ? [ogImage] : [],
-    },
+    description,
   }
 }
 
@@ -78,6 +66,15 @@ const ibmPlexMono = IBM_Plex_Mono({
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const {isEnabled: isDraftMode} = await draftMode()
 
+  // Social links for the persistent site header (E3: header renders without
+  // them when Sanity is unreachable — never a blank page).
+  let socialLinks: Awaited<ReturnType<typeof getPortfolio>>['socialLinks'] = []
+  try {
+    socialLinks = (await getPortfolio()).socialLinks
+  } catch {
+    // keep empty
+  }
+
   return (
     <html
       lang="en"
@@ -96,6 +93,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           )}
           {/* The <SanityLive> component is responsible for making all sanityFetch calls in your application live, so should always be rendered. */}
           <SanityLive onError={handleError} />
+          {/* Persistent header — stays mounted across navigations so the
+              segmented-control pill travels (specs/05-DESIGN-SYSTEM.md §7). */}
+          <SiteHeader socialLinks={socialLinks} />
           <main className="">{children}</main>
         </section>
         <SpeedInsights />

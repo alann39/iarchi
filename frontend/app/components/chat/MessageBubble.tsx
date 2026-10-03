@@ -156,6 +156,8 @@ function StreamingCursor() {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // Reduced motion: static block, no blink (specs/05-DESIGN-SYSTEM.md §7).
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const anim = el.animate(
       [
         {opacity: 1},

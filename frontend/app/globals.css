@@ -42,4 +42,78 @@
   --color-gray-950: #13141b;
 
   --default-transition-duration: 250ms;
+
+  /* ---- iarchi design tokens: Machine Room (specs/05-DESIGN-SYSTEM.md §3) ---- */
+  --color-paper: #f4f5f6;
+  --color-ink: #101418;
+  --color-accent: #ff4d00;
+  --color-muted: #6e7680;
+  --color-wash: #e9ebed;
+  --color-hairline: rgba(16, 20, 24, 0.12);
+
+  /* ---- Motion tokens (specs/05-DESIGN-SYSTEM.md §7) ---- */
+  --ease-lux: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-press: 100ms;
+  --dur-hover: 150ms;
+  --dur-reveal: 300ms;
+}
+
+/* ---- Signature micro-interactions (specs/05-DESIGN-SYSTEM.md §7) ----
+   Staggered blur reveal — once, 60ms stagger via --reveal-delay.
+   Banned forever: shine sweep, pulsing dot, typewriter loop, bounce easing,
+   cursor spotlight, streaming beam. */
+@keyframes iarchi-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.reveal {
+  opacity: 0;
+}
+
+.reveal.is-visible {
+  animation: iarchi-reveal var(--dur-reveal) var(--ease-lux) forwards;
+  animation-delay: var(--reveal-delay, 0ms);
+}
+
+@layer base {
+  body {
+    @apply bg-paper text-ink antialiased;
+  }
+
+  ::selection {
+    background: #101418;
+    color: #f4f5f6;
+  }
+
+  /* Always-visible focus (specs/05-DESIGN-SYSTEM.md §9) */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Reduced motion: everything becomes opacity-only / instant
+   (specs/05-DESIGN-SYSTEM.md §7). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal {
+    opacity: 1 !important;
+  }
 }

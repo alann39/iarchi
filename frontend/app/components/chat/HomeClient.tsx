@@ -6,6 +6,7 @@ import {ArrowRight} from 'lucide-react';
 import {ChatDock} from './ChatDock';
 import {MessageList} from './MessageList';
 import {SuggestedQuestions} from './SuggestedQuestions';
+import {Reveal} from '../Reveal';
 import type {ChatMessage, ToolEvent} from './types';
 
 export interface HomeClientProps {
@@ -318,8 +319,9 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
 
   return (
     <>
-      {/* 01 — Ask */}
-      <section aria-label="Ask" className="mt-12">
+      {/* 01 — Ask (staggered blur reveal, 120ms — continues the hero sequence) */}
+      <Reveal delay={120}>
+        <section aria-label="Ask" className="mt-12">
         <p className="font-['IBM_Plex_Mono',monospace] text-[11px] uppercase tracking-[0.12em] text-[#6E7680]">
           01 — Ask
         </p>
@@ -350,6 +352,7 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
           <ArrowRight size={18} className="shrink-0 text-[#101418]" aria-hidden="true" />
         </button>
       </section>
+      </Reveal>
 
       {/* Conversation */}
       {messages.length > 0 && (
