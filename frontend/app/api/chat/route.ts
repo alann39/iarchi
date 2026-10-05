@@ -34,7 +34,14 @@ export const runtime = 'nodejs'
 
 type SseEvent =
   | {type: 'text'; delta: string}
-  | {type: 'tool'; name: string; args: Record<string, unknown>; result: ToolResult}
+  | {
+      type: 'tool'
+      name: string
+      args: Record<string, unknown>
+      result: ToolResult
+      /** Story mode only (TASK-17): client renders the compact fan-stack variant. */
+      presentation?: 'compact'
+    }
   | {type: 'done'}
   | {type: 'error'; code: 'RATE_LIMITED' | 'LLM_ERROR' | 'BAD_REQUEST' | 'BAD_RESPONSE'; message: string}
 
@@ -55,6 +62,79 @@ const FRIENDLY_RATE_LIMITED =
 
 const LLM_TIMEOUT_MS = 30_000
 const MAX_OUTPUT_TOKENS = 800
+
+/**
+ * Story mode sections (TASK-17) — deterministic server-side orchestration.
+ *
+ * Observed 2026-10-05: the free-tier model cannot reliably follow multi-step
+ * tool instructions (it echoed the story prompt verbatim and called zero
+ * tools). So the SERVER owns the section order and runs the tools itself;
+ * the LLM only writes short prose per section — its strength. Event order in
+ * the stream is the document order: prose, stack, prose, stack…
+ */
+interface StorySection {
+  key: string;
+  tool: string;
+  args: Record<string, unknown>;
+  prompt: string;
+}
+
+const STORY_SECTIONS: StorySection[] = [
+  {
+    key: 'projects',
+    tool: 'show_projects',
+    args: {},
+    prompt:
+      "Open Archi's story: two vivid sentences about who he is and what drives him as a builder.",
+  },
+  {
+    key: 'experience',
+    tool: 'show_experience',
+    args: {},
+    prompt:
+      'Continue the story: two sentences on his unusual path from accounting into software engineering.',
+  },
+  {
+    key: 'music',
+    tool: 'show_taste',
+    args: {category: 'music'},
+    prompt:
+      'Continue the story: one or two sentences on what his music taste reveals about him.',
+  },
+  {
+    key: 'movies',
+    tool: 'show_taste',
+    args: {category: 'movie'},
+    prompt:
+      'Close the story: one or two sentences on his favorite films, ending with a warm invitation to get in touch.',
+  },
+];
+
+/** True when a tool result has something to show (empty → skip the section). */
+function toolHasItems(result: ToolResult): boolean {
+  if ('projects' in result) return result.projects.length > 0;
+  if ('experience' in result) return result.experience.length > 0;
+  if ('picks' in result) return result.picks.length > 0;
+  if ('groups' in result) return result.groups.length > 0;
+  if ('contacts' in result) return result.contacts.length > 0;
+  return result.profile != null;
+}
+
+/** Message shapes sent to the LLM, incl. multi-turn tool history. */
+type LlmMessage =
+  | {role: 'system'; content: string}
+  | {role: 'user'; content: string}
+  | {
+      role: 'assistant'
+      content: string | null
+      tool_calls?: Array<{
+        id: string
+        type: 'function'
+        function: {name: string; arguments: string}
+      }>
+    }
+  | {role: 'tool'; tool_call_id: string; content: string}
+
 
 // ---------------------------------------------------------------------------
 // Request validation
@@ -409,6 +489,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (!messages) {
     return errorJson('BAD_REQUEST', FRIENDLY_BAD_REQUEST, 400)
   }
+  // Story mode (TASK-17): only the exact 'story' value enables the agentic
+  // loop. Anything else is ignored — never rejected, never trusted blindly.
+  const storyMode = (body as {mode?: unknown}).mode === 'story'
 
   // 2. Rate limit.
   const ip = getClientIp(req)
@@ -436,6 +519,11 @@ export async function POST(req: NextRequest): Promise<Response> {
     console.error('[chat] LLM config missing (baseUrl/apiKey/model)')
     return sseErrorStream('LLM_ERROR', FRIENDLY_LLM_ERROR)
   }
+  // Bound as strings: TS narrowing of the outer consts does not survive into
+  // the doubly-nested streamTurn closure, so capture them once here (TASK-17).
+  const llmBaseUrl: string = baseUrl
+  const llmApiKey: string = apiKey
+  const llmModel: string = model
 
   // 5. Fetch portfolio + build system prompt (server-side only).
   // Dynamic imports: the Sanity client module throws at load time when its
@@ -453,7 +541,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     return sseErrorStream('LLM_ERROR', FRIENDLY_LLM_ERROR)
   }
 
-  // 6. Stream from the LLM.
+  // 6. Stream from the LLM — one turn per call. Story mode (TASK-17)
+  // loops up to MAX_STORY_TURNS: text segment → tool → results fed back.
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder()
@@ -461,114 +550,214 @@ export async function POST(req: NextRequest): Promise<Response> {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
       }
       const startedAt = Date.now()
-      const aborter = new AbortController()
-      const timeout = setTimeout(() => aborter.abort(), LLM_TIMEOUT_MS)
-      try {
-        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{role: 'system', content: systemPrompt}, ...messages],
-            tools: TOOLS,
-            tool_choice: 'auto',
-            stream: true,
-            max_tokens: MAX_OUTPUT_TOKENS,
-          }),
-          signal: aborter.signal,
-        })
 
-        if (!res.ok || !res.body) {
-          console.error('[chat] LLM request failed', {status: res.status})
-          send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
-          return
-        }
+      /**
+       * Runs a single LLM turn: streams text deltas + tool events to the
+       * client as they happen, executes tool calls server-side. Returns null
+       * when the turn terminated the stream with an error event (fetch
+       * failure or chain-of-thought leak).
+       *
+       * opts.tools=false disables tool calling (story sections — the server
+       * runs tools deterministically instead). opts.maxTokens caps output.
+       */
+      async function streamTurn(
+        turnMessages: LlmMessage[],
+        opts?: {tools?: boolean; maxTokens?: number},
+      ): Promise<{
+        text: string
+        calls: Array<{id: string; name: string; argsJson: string}>
+        executed: Array<{id: string; name: string; result: ToolResult}>
+        producedOutput: boolean
+      } | null> {
+        // Story sections: include tool definitions (the model behaves better
+        // with them present — observed 2026-10-05: omitting tools triggers
+        // reasoning leaks on the free tier) but ignore any tool calls the
+        // model emits; the server runs the section tool deterministically.
+        const ignoreToolCalls = opts?.tools === false
+        const aborter = new AbortController()
+        const timeout = setTimeout(() => aborter.abort(), LLM_TIMEOUT_MS)
+        try {
+          const res = await fetch(`${llmBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${llmApiKey}`,
+            },
+            body: JSON.stringify({
+              model: llmModel,
+              messages: turnMessages,
+              tools: TOOLS,
+              tool_choice: 'auto',
+              stream: true,
+              max_tokens: opts?.maxTokens ?? MAX_OUTPUT_TOKENS,
+            }),
+            signal: aborter.signal,
+          })
 
-        const toolCalls: AccumulatedToolCall[] = []
-        const thinkFilter = createThinkFilter()
-        let head = '' // cleaned-text head for leak detection (capped)
-        let leakCheckedEarly = false
-        let leaked = false
-        let producedOutput = false // any text delta or tool event sent downstream
-        const LEAK_CHECK_AT = 200
-        const HEAD_CAP = 600
+          if (!res.ok || !res.body) {
+            console.error('[chat] LLM request failed', {status: res.status})
+            send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
+            return null
+          }
 
-        for await (const chunk of readSseChunks(res.body)) {
-          const delta = chunk.choices?.[0]?.delta
-          if (!delta) continue
-          if (typeof delta.content === 'string' && delta.content.length > 0) {
-            const clean = filterThinkChunk(thinkFilter, delta.content)
-            if (clean.length > 0) {
-              if (head.length < HEAD_CAP) head += clean
-              if (!leakCheckedEarly && head.length >= LEAK_CHECK_AT) {
-                leakCheckedEarly = true
-                if (looksLikeLeak(head)) {
-                  leaked = true
-                  break
+          const toolCalls: AccumulatedToolCall[] = []
+          const thinkFilter = createThinkFilter()
+          let head = '' // cleaned-text head for leak detection (capped)
+          let leakCheckedEarly = false
+          let leaked = false
+          let producedOutput = false // any text delta or tool event sent downstream
+          let text = '' // cleaned text this turn (replayed into history for the loop)
+          const LEAK_CHECK_AT = 200
+          const HEAD_CAP = 600
+
+          for await (const chunk of readSseChunks(res.body)) {
+            const delta = chunk.choices?.[0]?.delta
+            if (!delta) continue
+            if (typeof delta.content === 'string' && delta.content.length > 0) {
+              const clean = filterThinkChunk(thinkFilter, delta.content)
+              if (clean.length > 0) {
+                text += clean
+                if (head.length < HEAD_CAP) head += clean
+                if (!leakCheckedEarly && head.length >= LEAK_CHECK_AT) {
+                  leakCheckedEarly = true
+                  if (looksLikeLeak(head)) {
+                    leaked = true
+                    break
+                  }
                 }
+                send({type: 'text', delta: clean})
+                producedOutput = true
               }
-              send({type: 'text', delta: clean})
+            }
+            for (const tc of delta.tool_calls ?? []) {
+              if (ignoreToolCalls) continue // story sections: server owns tools
+              const idx = tc.index ?? 0
+              let acc = toolCalls[idx]
+              if (!acc) {
+                acc = {id: '', name: '', arguments: ''}
+                toolCalls[idx] = acc
+              }
+              if (tc.id) acc.id = tc.id
+              if (tc.function?.name) acc.name = tc.function.name
+              if (tc.function?.arguments) acc.arguments += tc.function.arguments
+            }
+          }
+
+          // Flush the think-filter tail, then run the final leak check for
+          // short responses that never reached the early-check threshold.
+          const tail = flushThinkFilter(thinkFilter)
+          if (!leaked) {
+            if (head.length < HEAD_CAP) head += tail
+            if (looksLikeLeak(head)) {
+              leaked = true
+            } else if (tail.length > 0) {
+              text += tail
+              send({type: 'text', delta: tail})
               producedOutput = true
             }
           }
-          for (const tc of delta.tool_calls ?? []) {
-            const idx = tc.index ?? 0
-            let acc = toolCalls[idx]
-            if (!acc) {
-              acc = {id: '', name: '', arguments: ''}
-              toolCalls[idx] = acc
+
+          if (leaked) {
+            // Never surface chain-of-thought: the client replaces any partial
+            // content with the friendly message on BAD_RESPONSE.
+            try {
+              aborter.abort()
+            } catch {
+              // ignore — stream is ending anyway
             }
-            if (tc.id) acc.id = tc.id
-            if (tc.function?.name) acc.name = tc.function.name
-            if (tc.function?.arguments) acc.arguments += tc.function.arguments
+            send({type: 'error', code: 'BAD_RESPONSE', message: FRIENDLY_LLM_ERROR})
+            return null
+          }
+
+          // Execute accumulated tool calls server-side, in order.
+          const calls: Array<{id: string; name: string; argsJson: string}> = []
+          const executed: Array<{id: string; name: string; result: ToolResult}> = []
+          toolCalls.forEach((tc, i) => {
+            if (!tc.name) return
+            let parsedArgs: unknown = {}
+            try {
+              parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {}
+            } catch {
+              return // Invalid args → skip tool, continue as text.
+            }
+            const done = executeTool(tc.name, parsedArgs, portfolio)
+            if (done) {
+              const callId = tc.id || `call_${Date.now()}_${i}`
+              const event: SseEvent = storyMode
+                ? {type: 'tool', ...done, presentation: 'compact'}
+                : {type: 'tool', ...done}
+              send(event)
+              calls.push({id: callId, name: tc.name, argsJson: tc.arguments || '{}'})
+              executed.push({id: callId, name: tc.name, result: done.result})
+              producedOutput = true
+            }
+          })
+
+          return {text, calls, executed, producedOutput}
+        } catch (e) {
+          const isTimeout = e instanceof Error && e.name === 'AbortError'
+          console.error('[chat] stream failed', {code: isTimeout ? 'timeout' : 'llm_error'})
+          send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
+          return null
+        } finally {
+          clearTimeout(timeout)
+        }
+      }
+
+      try {
+        const convo: LlmMessage[] = [{role: 'system', content: systemPrompt}, ...messages]
+        let anyOutput = false
+
+        if (!storyMode) {
+          // Normal chat: single turn, model may call tools itself.
+          const r = await streamTurn(convo)
+          if (!r) return // error event already sent — end the stream
+          anyOutput = r.producedOutput
+        } else {
+          // Story mode: deterministic section loop. The server owns the
+          // section order and runs each section's tool itself; the LLM only
+          // writes short prose per section. Sections with no data are
+          // skipped silently (no prose, no stack).
+          const sections = STORY_SECTIONS.filter((s) => {
+            const done = executeTool(s.tool, s.args, portfolio)
+            return done !== null && toolHasItems(done.result)
+          })
+          if (sections.length === 0) {
+            // Degraded: no portfolio content — one plain turn, no stacks.
+            const r = await streamTurn(convo)
+            if (!r) return
+            anyOutput = r.producedOutput
+          } else {
+            const storyConvo: LlmMessage[] = [...convo]
+            for (const s of sections) {
+              // One retry when the section comes back empty — the free tier
+              // intermittently returns zero text for short prompts.
+              let r: Awaited<ReturnType<typeof streamTurn>> | null = null
+              for (let attempt = 0; attempt < 2; attempt++) {
+                r = await streamTurn([...storyConvo, {role: 'user', content: s.prompt}], {
+                  tools: false,
+                  maxTokens: 250,
+                })
+                if (!r) return // error event already sent — end the stream
+                if (r.text.trim().length > 0) break
+              }
+              if (!r) return
+              anyOutput = anyOutput || r.producedOutput
+              storyConvo.push(
+                {role: 'user', content: s.prompt},
+                {role: 'assistant', content: r.text},
+              )
+              const done = executeTool(s.tool, s.args, portfolio)
+              if (done && toolHasItems(done.result)) {
+                const event: SseEvent = {type: 'tool', ...done, presentation: 'compact'}
+                send(event)
+                anyOutput = true
+              }
+            }
           }
         }
 
-        // Flush the think-filter tail, then run the final leak check for
-        // short responses that never reached the early-check threshold.
-        const tail = flushThinkFilter(thinkFilter)
-        if (!leaked) {
-          if (head.length < HEAD_CAP) head += tail
-          if (looksLikeLeak(head)) {
-            leaked = true
-          } else if (tail.length > 0) {
-            send({type: 'text', delta: tail})
-            producedOutput = true
-          }
-        }
-
-        if (leaked) {
-          // Never surface chain-of-thought: the client replaces any partial
-          // content with the friendly message on BAD_RESPONSE.
-          try {
-            aborter.abort()
-          } catch {
-            // ignore — stream is ending anyway
-          }
-          send({type: 'error', code: 'BAD_RESPONSE', message: FRIENDLY_LLM_ERROR})
-          return
-        }
-
-        // Execute accumulated tool calls server-side, in order.
-        for (const tc of toolCalls) {
-          if (!tc.name) continue
-          let parsedArgs: unknown = {}
-          try {
-            parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {}
-          } catch {
-            continue // Invalid args → skip tool, continue as text.
-          }
-          const executed = executeTool(tc.name, parsedArgs, portfolio)
-          if (executed) {
-            send({type: 'tool', ...executed})
-            producedOutput = true
-          }
-        }
-
-        if (!producedOutput) {
+        if (!anyOutput) {
           // Provider returned 200 but produced no text and no tool calls
           // (hiccup / content filter). An empty bubble is worse than an
           // honest error with a Retry affordance.
@@ -576,13 +765,12 @@ export async function POST(req: NextRequest): Promise<Response> {
         } else {
           send({type: 'done'})
         }
-        console.log('[chat] ok', {ms: Date.now() - startedAt, producedOutput})
-      } catch (e) {
-        const isTimeout = e instanceof Error && e.name === 'AbortError'
-        console.error('[chat] stream failed', {code: isTimeout ? 'timeout' : 'llm_error'})
-        send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
+        console.log('[chat] ok', {
+          ms: Date.now() - startedAt,
+          producedOutput: anyOutput,
+          storyMode,
+        })
       } finally {
-        clearTimeout(timeout)
         controller.close()
       }
     },

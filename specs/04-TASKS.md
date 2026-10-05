@@ -128,6 +128,56 @@ Chat-native delight + utility. Both live inside the existing chat — no new bac
 
 ---
 
+### [TASK-17] Full-story fan stacks (P4 — 2026-10-05, design approved v3.2)
+
+`/story` renders narrative text interleaved with compact **fan stacks** per content type. Design: mockup `~/workspace/your_files/iarchi-story-cards.html` v3.2 (fan deck + blur modal + playable music + artwork/posters). Reference studied: dapp-portfolio.netlify.app (fan tilt ±5–8°, +N overlay, per-type card structures, modal expand — we add hover spread + compact/full differentiation, which the reference lacks).
+
+**Contract changes (specs/03-CONTRACTS.md §1–§2):**
+- Request: `POST /api/chat` accepts `mode?: 'story'` alongside `messages`.
+- SSE tool event gains `presentation?: 'compact'`. Only story mode sets it.
+- Story mode runs a deterministic server-side section loop (projects → experience → music → movies): short LLM prose per section, then the section's tool executed server-side. Event order in the stream IS the document order — the client interleaves text and stacks without fragile markers.
+
+**Server (`frontend/app/api/chat/route.ts`, `lib/chat-prompt.ts`):**
+- Read `mode` from the POST body (extend body parsing next to `validateBody`; `mode` is a top-level field, not a message).
+- If `mode === 'story'`: deterministic section loop over projects → experience → music → movies. Per section: (1) one short LLM turn for the section prose (`tool_choice: 'none'`, max 250 tokens, previous prose accumulated for coherence), then (2) the section's tool executed server-side, its event sent with `presentation: 'compact'`. Sections with empty results are skipped silently. Event order in the stream is the document order.
+- Why deterministic, not agentic: observed 2026-10-05 — the free-tier model echoed multi-step tool instructions verbatim and called zero tools. The server owns structure; the LLM only writes short prose (its strength).
+- Existing guards apply per turn: think-filter, leak detector → BAD_RESPONSE, per-fetch LLM timeout.
+- Non-story requests: byte-for-byte current behavior (single turn, `tool_choice: 'auto'`).
+
+**Client:**
+- `app/components/chat/types.ts`: `ToolEvent.presentation?: 'compact'`; new `StoryBlock = {kind:'text'; text:string} | {kind:'tool'; tool:ToolEvent}`.
+- `ChatDock.tsx`: when the outgoing message is the story prompt (`FULL_STORY_API_PROMPT`, via `/story` slash or suggested-question chip), send `mode:'story'`. The stream reader builds an ordered `StoryBlock[]` in story mode (text deltas append to the current text block; each tool event pushes a tool block and opens a new text block). Normal mode keeps the current `content` + `tools` path untouched.
+- New `StoryMessage.tsx`: renders blocks in order — text blocks via the existing markdown renderer (extract/share `renderMarkdown` from `MessageBubble.tsx`), compact tool blocks via `FanStack`.
+- New `app/components/chat/fan/`:
+  - `FanStack.tsx` — slim mono header (LABEL ■ COUNT + OPEN ▸), fanned faces, `+N` badge on the last face, click/Enter opens the modal.
+  - `faces/ProjectFace.tsx` (blueprint: orange typebar, `P.01 · year`, Lucide icon, title, sub, chips), `faces/ExperienceFace.tsx` (ledger slip: ink typebar, `E.01`, icon, role, org · period), `faces/MusicFace.tsx` (tape strip: working play button, track — artist, duration, live progress), `faces/MovieFace.tsx` (ticket stub: dashed stub + vertical year, `F.01`, icon, title, director, rating chip).
+  - `fanIcons.ts` — per-card Lucide icon resolution, keyword heuristic over title/type (e.g. bot/globe/rocket, code/calculator/briefcase, disc/music/headphones, clapperboard/film) with a per-type default. No Sanity schema change in v1.
+  - `StackModal.tsx` — fixed overlay `rgba(16,20,24,.42)` + `backdrop-filter: blur(10px)`; dialog = paper, 1px ink border, sharp corners, mono header + ×; close via × / backdrop click / Esc; focus the close button on open, restore focus on close; `aria-modal` + `role="dialog"`; body scroll lock while open. Body reuses the existing full cards (`ProjectCard`, `ExperienceCard`, `TasteCard`) — music shows `artworkUrl` (84px), movies show `artworkUrl` poster (76×112).
+  - `fan.css` — port of the mockup CSS: `@property --r/--tx` fan spread, static negative-margin overlap, per-card hover (straighten + `-10px` lift + orange border), modal enter (backdrop fade 180ms, dialog `translateY(14px)→0` 240ms expo-out). Transform/opacity only — no layout-property animation (impeccable-clean).
+- `ToolRenderer.tsx`: unchanged for normal mode. (Story mode never reaches it — `StoryMessage` routes compact tools to `FanStack`.)
+- Music playback reuses `TasteCard`'s module-level `activeAudio` one-at-a-time pattern. `show_taste` in story mode splits into two stacks: MUSIC and MOVIES (by `pick.category`).
+- Motion tokens already exist in `globals.css` (`--ease-lux` = the expo, `--dur-press/hover/reveal`); fan/modal timings: hover 220ms/180ms, modal 180ms/240ms.
+
+**Data (no code):** movie picks need `artworkUrl` poster URLs in Sanity (Archi fills via Studio; TMDB `image.tmdb.org` CDN verified hotlink-OK, 200). Music `artworkUrl`/`previewUrl` already flow from iTunes.
+
+**Non-goals:** normal-mode chat rendering; Sanity schema changes; draft-preview wiring.
+
+**Constraints (locked):**
+- Design direction Machine Room + all rejections in 05-DESIGN-SYSTEM.md §7 stay enforced (detector-clean: no layout animation, no banned patterns).
+- Placeholders stay clearly marked; never invent personal data (icons are decorative, chosen by keyword — not facts).
+- Phases land behind the `mode`/`presentation` flags: normal chat cannot regress.
+
+**Phases:**
+1. Contract + server: `mode` parsing, `presentation` marker, 3-turn loop, story prompt text, 03-CONTRACTS.md update.
+2. Fan components + modal + `fan.css` (static, props-driven; verify against mockup).
+3. Wire-up: ChatDock story mode, ordered blocks, StoryMessage, icon heuristic, artwork/poster plumbing.
+4. Verify: `tsc`, `npm run build`, manual `/story` pass (fan hover/spread, modal open/close/Esc, audio one-at-a-time, mobile bottom sheet), reduced-motion check.
+
+- Files Affected: `frontend/app/api/chat/route.ts`, `frontend/lib/chat-prompt.ts`, `frontend/app/components/chat/{types.ts,ChatDock.tsx,MessageBubble.tsx,ToolRenderer.tsx}`, new `frontend/app/components/chat/{StoryMessage.tsx,fan/*}`, `frontend/app/globals.css`, `specs/03-CONTRACTS.md`.
+- Verification Command: `npx tsc --noEmit && npm run build` green + manual `/story` interaction check (narrative interleaves with stacks; hover spreads fan; card hover lifts; OPEN → blur modal with full cards + artwork/poster; music plays one-at-a-time; Esc/backdrop/× close; normal questions unchanged).
+
+---
+
 ## Agent Handoff Prompt (Step 6 SDD)
 
 Kirim ke coding agent (OMP / OpenCode) per task:

@@ -18,6 +18,9 @@ Content-Type: application/json
 ```
 - `messages`: riwayat percakapan dari client (`user`/`assistant` saja). System prompt ditambahkan server — client dilarang mengirim `role: "system"`.
 - Validasi: array 1–50 item, tiap `content` string non-empty. Content >2000 char di-**truncate** (bukan direject — jawaban panjang AI seperti full story masuk history; mereject-nya bikin pesan *berikutnya* 400). Invalid (role asing, content kosong/bukan string) → `400 BAD_REQUEST`.
+- `mode` (TASK-17): `"story"` mengaktifkan story mode — server menjalankan section loop deterministik (prosa pendek per section + tool section dieksekusi server). Nilai lain diabaikan (tidak direject).
+
+**Story mode** (TASK-17): request dengan `"mode": "story"` (dipakai `/story`) membuat server menjalankan section loop deterministik: untuk tiap section (projects → experience → music → movies), server (1) memanggil LLM untuk prosa narasi pendek section tersebut (`tool_choice: 'none'`, max 250 token), lalu (2) mengeksekusi tool section itu sendiri dan mengirim tool event dengan `"presentation": "compact"`. Section yang datanya kosong di-skip diam-diam. **Urutan event di stream adalah urutan dokumen** — client meng-interleave teks dan stack tanpa marker. Desain ini dipilih setelah observasi 2026-10-05: model free-tier tidak bisa diandalkan untuk instruksi tool multi-step (me-echo prompt, nol tool call) — jadi server yang memegang struktur, LLM hanya menulis prosa.
 
 **Response** — `text/event-stream` (SSE), satu JSON per baris `data: {...}\n\n`:
 
@@ -28,6 +31,10 @@ Content-Type: application/json
 // hasil tool call yang sudah dieksekusi server
 { "type": "tool", "name": "show_projects", "args": { "tag": "web" },
   "result": { "projects": [ ProjectCardData ] } }
+
+// story mode (TASK-17): tool event membawa presentation flag
+{ "type": "tool", "name": "show_projects", "args": {},
+  "result": { "projects": [ ProjectCardData ] }, "presentation": "compact" }
 
 // selesai
 { "type": "done" }
