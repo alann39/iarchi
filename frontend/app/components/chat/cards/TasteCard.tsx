@@ -5,6 +5,8 @@ import {ArrowUpRight, Pause, Play} from 'lucide-react';
 
 import type {PickData} from '@/lib/portfolio';
 
+import {releaseAudio, requestPlay} from '../previewAudio';
+
 export interface TasteCardProps {
   pick: PickData;
 }
@@ -12,8 +14,7 @@ export interface TasteCardProps {
 const MONO = "font-['IBM_Plex_Mono',monospace]";
 const DISPLAY = "font-['Space_Grotesk',sans-serif]";
 
-/** Module-level: only one preview plays at a time across all cards. */
-let activeAudio: HTMLAudioElement | null = null;
+/** One-at-a-time slot lives in previewAudio.ts (TASK-17) — shared with the fan MiniPlayer. */
 
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '0:00';
@@ -42,7 +43,7 @@ function PreviewPlayer({src, title}: {src: string; title: string}) {
     const onMeta = () => setDuration(audio.duration || 0);
     const onEnd = () => {
       setCurrent(0);
-      if (activeAudio === audio) activeAudio = null;
+      releaseAudio(audio);
     };
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
@@ -55,22 +56,15 @@ function PreviewPlayer({src, title}: {src: string; title: string}) {
       audio.removeEventListener('timeupdate', onTime);
       audio.removeEventListener('loadedmetadata', onMeta);
       audio.removeEventListener('ended', onEnd);
-      if (activeAudio === audio) activeAudio = null;
+      releaseAudio(audio);
     };
   }, []);
 
   const toggle = () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) {
-      if (activeAudio && activeAudio !== audio) activeAudio.pause();
-      activeAudio = audio;
-      void audio.play().catch(() => {
-        if (activeAudio === audio) activeAudio = null;
-      });
-    } else {
-      audio.pause();
-    }
+    if (audio.paused) requestPlay(audio);
+    else audio.pause();
   };
 
   const seek = (e: React.MouseEvent) => {

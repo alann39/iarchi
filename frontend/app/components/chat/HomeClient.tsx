@@ -8,7 +8,7 @@ import {MessageList} from './MessageList';
 import {SuggestedQuestions} from './SuggestedQuestions';
 import {Reveal} from '../Reveal';
 import {FULL_STORY_API_PROMPT, FULL_STORY_LABEL} from './slashCommands';
-import type {ChatMessage, ToolEvent} from './types';
+import type {ChatMessage, StoryBlock, ToolEvent} from './types';
 
 export interface HomeClientProps {
   /** Suggested questions from Sanity (or FALLBACK defaults from the server). */
@@ -29,8 +29,15 @@ interface SseEvent {
   delta?: string;
   name?: string;
   result?: ToolEvent['result'];
+  /** Story mode only (TASK-17) — mirrors the server contract. */
+  presentation?: 'compact';
   code?: string;
   message?: string;
+}
+
+interface StreamOptions {
+  /** 'story' enables the server agentic loop + compact fan stacks (TASK-17). */
+  mode?: 'story';
 }
 
 /**
@@ -43,11 +50,12 @@ async function postChatStream(
   history: HistoryMessage[],
   signal: AbortSignal,
   onEvent: (event: SseEvent) => void,
+  opts?: StreamOptions,
 ): Promise<void> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({messages: history}),
+    body: JSON.stringify({messages: history, ...(opts?.mode ? {mode: opts.mode} : {})}),
     signal,
   });
 
@@ -158,14 +166,34 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
   );
 
   const routeStreamEvents = useCallback(
-    (controller: AbortController, history: HistoryMessage[]) => {
+    (controller: AbortController, history: HistoryMessage[], opts?: StreamOptions) => {
       void postChatStream(history, controller.signal, (event) => {
         if (event.type === 'text' && event.delta) {
           const delta = event.delta;
-          patchStreaming((m) => ({...m, content: m.content + delta}));
+          patchStreaming((m) => {
+            // Story mode (TASK-17): keep ordered blocks so narrative text and
+            // fan stacks interleave in stream order. Normal mode keeps the
+            // legacy content + tools shape untouched.
+            if (!m.story) return {...m, content: m.content + delta};
+            const blocks = m.blocks ?? [];
+            const last = blocks[blocks.length - 1];
+            const nextBlocks: StoryBlock[] =
+              last?.kind === 'text'
+                ? [...blocks.slice(0, -1), {kind: 'text', text: last.text + delta}]
+                : [...blocks, {kind: 'text', text: delta}];
+            return {...m, content: m.content + delta, blocks: nextBlocks};
+          });
         } else if (event.type === 'tool' && event.name) {
-          const toolEvent: ToolEvent = {name: event.name, result: event.result ?? {}};
-          patchStreaming((m) => ({...m, tools: [...(m.tools ?? []), toolEvent]}));
+          const toolEvent: ToolEvent = {
+            name: event.name,
+            result: event.result ?? {},
+            presentation: event.presentation,
+          };
+          patchStreaming((m) =>
+            m.story
+              ? {...m, blocks: [...(m.blocks ?? []), {kind: 'tool', tool: toolEvent}]}
+              : {...m, tools: [...(m.tools ?? []), toolEvent]},
+          );
         } else if (event.type === 'done') {
           patchStreaming((m) => ({...m, status: 'complete'}));
           streamingIdRef.current = null;
@@ -190,11 +218,12 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
    * (which POST via runStream below) never double-send.
    */
   const prepareSend = useCallback(
-    (apiText: string, displayText?: string): HistoryMessage[] | null => {
+    (apiText: string, displayText?: string, opts?: StreamOptions): HistoryMessage[] | null => {
       const trimmed = apiText.trim();
       if (!trimmed || streamingIdRef.current) return null;
       settleStreaming();
 
+      const story = opts?.mode === 'story';
       const prev = messagesRef.current;
       const userMsg: ChatMessage = {
         id: nextId(),
@@ -208,6 +237,8 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
         content: '',
         status: 'streaming',
         tools: [],
+        // TASK-17: story answers render ordered blocks via MessageBubble.
+        ...(story ? {story: true as const, blocks: [] as StoryBlock[]} : {}),
       };
       streamingIdRef.current = aiMsg.id;
       setMessagesSync([...prev, userMsg, aiMsg]);
@@ -226,12 +257,12 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
 
   /** Full send path for external triggers (chips, full-story button). */
   const sendExternal = useCallback(
-    (apiText: string, displayText?: string) => {
-      const history = prepareSend(apiText, displayText);
+    (apiText: string, displayText?: string, opts?: StreamOptions) => {
+      const history = prepareSend(apiText, displayText, opts);
       if (!history) return;
       const controller = new AbortController();
       abortRef.current = controller;
-      routeStreamEvents(controller, history);
+      routeStreamEvents(controller, history, opts);
     },
     [prepareSend, routeStreamEvents],
   );
@@ -286,7 +317,8 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
   );
 
   const handleFullStory = useCallback(() => {
-    sendExternal(FULL_STORY_API_PROMPT, FULL_STORY_LABEL);
+    // TASK-17: story mode — server agentic loop + compact fan stacks.
+    sendExternal(FULL_STORY_API_PROMPT, FULL_STORY_LABEL, {mode: 'story'});
   }, [sendExternal]);
 
   // --- P3: scripted replies + /clear (specs/04-TASKS.md TASK-16) --------------
@@ -327,7 +359,14 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
       const filtered = msgs.filter((m) => m.id !== messageId);
       messagesRef.current = filtered;
       setMessages(filtered);
-      sendExternal(userText);
+      // TASK-17: retrying a failed story keeps story mode (the display text
+      // alone would resend as a normal chat request).
+      const failed = msgs[idx];
+      if (failed?.story) {
+        sendExternal(FULL_STORY_API_PROMPT, FULL_STORY_LABEL, {mode: 'story'});
+      } else {
+        sendExternal(userText);
+      }
     },
     [sendExternal],
   );
@@ -404,7 +443,14 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
         onTool={handleDockTool}
         onDone={handleDockDone}
         onError={handleDockError}
-        onSlashPrompt={(apiText, displayText) => sendExternal(apiText, displayText)}
+        onSlashPrompt={(apiText, displayText) =>
+          // TASK-17: /story reuses the story prompt → story mode.
+          sendExternal(
+            apiText,
+            displayText,
+            apiText === FULL_STORY_API_PROMPT ? {mode: 'story'} : undefined,
+          )
+        }
         onScriptedReply={sendScripted}
         onClearChat={clearChat}
         cvUrl={cvUrl}
