@@ -21,8 +21,11 @@ import {assist} from '@sanity/assist'
 const projectId = process.env.SANITY_STUDIO_PROJECT_ID || 'your-projectID'
 const dataset = process.env.SANITY_STUDIO_DATASET || 'production'
 
-// URL for preview functionality, defaults to localhost:3000 if not set
-const SANITY_STUDIO_PREVIEW_URL = process.env.SANITY_STUDIO_PREVIEW_URL || 'http://localhost:3000'
+// URL for preview functionality. Defaults to the production site so the
+// deployed studio's Presentation tab works without a local dev server.
+// Override locally with SANITY_STUDIO_PREVIEW_URL=http://localhost:3000
+const SANITY_STUDIO_PREVIEW_URL =
+  process.env.SANITY_STUDIO_PREVIEW_URL || 'https://iarchi.vercel.app'
 
 // Define the home location for the presentation tool
 const homeLocation = {
@@ -47,7 +50,7 @@ function resolveHref(documentType?: string, slug?: string): string | undefined {
 // Main Sanity configuration
 export default defineConfig({
   name: 'default',
-  title: 'Sanity + Next.js Starter Template',
+  title: 'iarchi Studio',
 
   projectId,
   dataset,
@@ -66,7 +69,7 @@ export default defineConfig({
         mainDocuments: defineDocuments([
           {
             route: '/',
-            filter: `_type == "settings" && _id == "siteSettings"`,
+            filter: `_type == "siteSettings" && _id == "siteSettings"`,
           },
           {
             route: '/:slug',
@@ -79,7 +82,7 @@ export default defineConfig({
         ]),
         // Locations Resolver API allows you to define where data is being used in your application. https://www.sanity.io/docs/visual-editing/presentation-resolver-api#8d8bca7bfcd7
         locations: {
-          settings: defineLocations({
+          siteSettings: defineLocations({
             locations: [homeLocation],
             message: 'This document is used on all pages',
             tone: 'positive',
