@@ -467,6 +467,14 @@ const LEAK_PATTERNS: RegExp[] = [
   /the system (says|instructs|tells)/i,
   /as an ai language model/i,
   /"FACTS"/,
+  // Observed 2026-10-05: free-tier model leaks reasoning with "we" phrasing
+  // ("We need to answer user query...", "Must follow rules...", "We can
+  // derive from..."). Legitimate portfolio answers never reason out loud.
+  /we need to (answer|ensure|create|follow|check)/i,
+  /must follow rules/i,
+  /we (can|should) (derive|reference|craft|ensure)/i,
+  /do not (hallucinate|invent beyond)/i,
+  /stay within facts/i,
 ]
 
 function looksLikeLeak(text: string): boolean {
