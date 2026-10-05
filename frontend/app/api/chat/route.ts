@@ -2,7 +2,8 @@
  * POST /api/chat — the ONLY LLM caller in the app (Constitution §2).
  *
  * Contract: specs/03-CONTRACTS.md §1. Flow: specs/02-ARCHITECTURE.md §3.
- * - Validates body (rejects role:"system", enforces 1–50 msgs, 1–2000 chars).
+ * - Validates body (rejects role:"system"/empty content, enforces 1–50 msgs;
+ *   over-length content is truncated to 2000 chars, not rejected).
  * - Rate-limits 20 req/min/IP (in-memory).
  * - Builds the system prompt from Sanity portfolio content (anti-hallucination).
  * - Calls an OpenAI-compatible LLM with tools, streaming SSE back to the client.
@@ -64,6 +65,14 @@ interface ValidatedMessage {
   content: string
 }
 
+/**
+ * Max chars per message sent to the LLM. Over-length messages are TRUNCATED,
+ * not rejected — our own long assistant answers (e.g. the 400-word full
+ * story) would otherwise 400 the user's *next* message (bug found 2026-10-05).
+ * The bound still caps abuse: at most 50 msgs × MAX_MESSAGE_CHARS per request.
+ */
+const MAX_MESSAGE_CHARS = 2000
+
 function validateBody(body: unknown): ValidatedMessage[] | null {
   if (typeof body !== 'object' || body === null) return null
   const messages = (body as {messages?: unknown}).messages
@@ -75,8 +84,8 @@ function validateBody(body: unknown): ValidatedMessage[] | null {
     const {role, content} = m as {role?: unknown; content?: unknown}
     // Only user/assistant — "system" (or anything else) from the client is rejected.
     if (role !== 'user' && role !== 'assistant') return null
-    if (typeof content !== 'string' || content.length < 1 || content.length > 2000) return null
-    out.push({role, content})
+    if (typeof content !== 'string' || content.length < 1) return null
+    out.push({role, content: content.slice(0, MAX_MESSAGE_CHARS)})
   }
   return out
 }

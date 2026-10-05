@@ -17,7 +17,7 @@ Content-Type: application/json
 }
 ```
 - `messages`: riwayat percakapan dari client (`user`/`assistant` saja). System prompt ditambahkan server — client dilarang mengirim `role: "system"`.
-- Validasi: array 1–50 item, tiap `content` string 1–2000 char. Invalid → `400 BAD_REQUEST`.
+- Validasi: array 1–50 item, tiap `content` string non-empty. Content >2000 char di-**truncate** (bukan direject — jawaban panjang AI seperti full story masuk history; mereject-nya bikin pesan *berikutnya* 400). Invalid (role asing, content kosong/bukan string) → `400 BAD_REQUEST`.
 
 **Response** — `text/event-stream` (SSE), satu JSON per baris `data: {...}\n\n`:
 
