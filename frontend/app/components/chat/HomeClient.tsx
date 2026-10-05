@@ -167,8 +167,11 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
 
   const routeStreamEvents = useCallback(
     (controller: AbortController, history: HistoryMessage[], opts?: StreamOptions) => {
-      void postChatStream(history, controller.signal, (event) => {
-        if (event.type === 'text' && event.delta) {
+      void postChatStream(
+        history,
+        controller.signal,
+        (event) => {
+          if (event.type === 'text' && event.delta) {
           const delta = event.delta;
           patchStreaming((m) => {
             // Story mode (TASK-17): keep ordered blocks so narrative text and
@@ -202,7 +205,9 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
         } else if (event.type === 'error') {
           handleStreamError(event.code ?? 'LLM_ERROR', event.message ?? FRIENDLY_LLM_ERROR);
         }
-      }).catch(() => {
+        },
+        opts,
+      ).catch(() => {
         if (!controller.signal.aborted) {
           handleStreamError('NETWORK_ERROR', FRIENDLY_LLM_ERROR);
         }
