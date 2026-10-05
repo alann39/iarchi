@@ -7,6 +7,7 @@ import {ChatDock} from './ChatDock';
 import {MessageList} from './MessageList';
 import {SuggestedQuestions} from './SuggestedQuestions';
 import {Reveal} from '../Reveal';
+import {FULL_STORY_API_PROMPT, FULL_STORY_LABEL} from './slashCommands';
 import type {ChatMessage, ToolEvent} from './types';
 
 export interface HomeClientProps {
@@ -17,11 +18,6 @@ export interface HomeClientProps {
   /** Contact email from siteSettings (threaded to ChatDock). */
   contactEmail?: string;
 }
-
-// Hidden prompt per specs/07-UX-FLOWS.md Flow 5. The visitor taps the button;
-// the API receives the full instruction while the bubble shows a friendly label.
-const FULL_STORY_API_PROMPT = 'Tell me your full story as a narrative bio (max 400 words).';
-const FULL_STORY_LABEL = 'Tell me your full story';
 
 const FRIENDLY_LLM_ERROR = 'Hmm, my brain buffered. Mind trying again?';
 const FRIENDLY_RATE_LIMITED = 'Whoa, lots of questions — give me a minute.';
@@ -293,6 +289,28 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
     sendExternal(FULL_STORY_API_PROMPT, FULL_STORY_LABEL);
   }, [sendExternal]);
 
+  // --- P3: scripted replies + /clear (specs/04-TASKS.md TASK-16) --------------
+  // Secret phrases and /help resolve to authored in-chat messages. They never
+  // touch the LLM path, so they can't trip the BAD_RESPONSE leak guard.
+
+  const sendScripted = useCallback(
+    (userText: string, replyText: string) => {
+      settleStreaming();
+      const prev = messagesRef.current;
+      setMessagesSync([
+        ...prev,
+        {id: nextId(), role: 'user', content: userText, status: 'complete'},
+        {id: nextId(), role: 'assistant', content: replyText, status: 'complete'},
+      ]);
+    },
+    [settleStreaming],
+  );
+
+  const clearChat = useCallback(() => {
+    settleStreaming();
+    setMessagesSync([]);
+  }, [settleStreaming]);
+
   const handleRetry = useCallback(
     (messageId: string) => {
       const msgs = messagesRef.current;
@@ -317,6 +335,20 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
   // Abort in-flight request on unmount.
   useEffect(() => {
     return () => abortRef.current?.abort();
+  }, []);
+
+  // P3 egg 4 — DevTools console message. Runs once on landing mount. It's the
+  // intentional discoverability hint for the ■ easter egg (egg 1).
+  useEffect(() => {
+    console.log(
+      "%c■ You're poking around the machine room.",
+      'color:#FF4D00;font-weight:bold;font-family:monospace;',
+    );
+    console.log('%cLike what you see? → /contact', 'font-family:monospace;');
+    console.log(
+      '%cpsst — the orange square keeps count.',
+      'color:#6E7680;font-style:italic;font-family:monospace;',
+    );
   }, []);
 
   const showChips = messages.length === 0;
@@ -372,6 +404,9 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
         onTool={handleDockTool}
         onDone={handleDockDone}
         onError={handleDockError}
+        onSlashPrompt={(apiText, displayText) => sendExternal(apiText, displayText)}
+        onScriptedReply={sendScripted}
+        onClearChat={clearChat}
         cvUrl={cvUrl}
         contactEmail={contactEmail}
         busy={sending}

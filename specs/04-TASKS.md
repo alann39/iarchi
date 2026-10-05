@@ -98,6 +98,34 @@
 - Tool `show_taste` (args category?) + `TasteCard` (+`PreviewPlayer`) + prompt FACTS section. Dummy-seeded; Archi ganti dengan favorit asli via CMS.
 - Easter eggs: DITUNDA phase ini (keputusan Archi 2026-10-03).
 
+### [TASK-16] Easter eggs + slash commands (P3 — 2026-10-05, Archi approved)
+
+Chat-native delight + utility. Both live inside the existing chat — no new backend.
+
+**Slash commands** (`frontend/app/components/chat/slashCommands.ts` registry, `SlashMenu.tsx` menu):
+- Menu: floating autocomplete above the composer. Opens when input starts with `/` and has no space; prefix-filters on the query. Keyboard: ↑/↓ navigate, Tab/Enter runs, Esc dismisses (draft kept). Click selects. Machine Room styling: paper menu, 1px ink border, mono `/command` + description; active row = ink bg/paper text (color change only); action rows get orange `▸`. Opens instantly (no animation).
+- Prompt class (injects message → AI streams answer): `/projects` "Show me your work, annotated", `/experience` "Where have you worked?", `/music` "What music are you into?", `/movies` "What are your favorite movies?", `/blog` "What have you written lately?", `/story` → reuses `FULL_STORY_API_PROMPT` (hidden prompt, "Tell me your full story" label).
+- Action class (deterministic, client-side, no LLM): `/cv` → CV download handler, `/contact` → mailto handler, `/clear` → wipe conversation, `/help` → authored in-chat command list.
+- Intercept order in `ChatDock.handleSend`: **slash → secret phrase → LLM**. Unknown `/foo` (or with spaces) falls through to the normal LLM path — never an error.
+
+**Egg 1 — the ■ keeps count** (`HeroHeadline.tsx`): 5 clicks on the orange kicker square within a 1.5s decay window (else counter resets) → DECLASSIFIED // FIELD NOTES card under the hero (mono, 1px orange border, rotated stamp). Card content is a PLACEHOLDER — Archi's lore to write; do NOT invent personal facts. `localStorage` flag `iarchi_declassified`; repeat visits show the card as "already declassified".
+
+**Egg 2 — secret phrases** (`secretPhrases.ts`): exact-match map (lowercase + trim), checked client-side BEFORE the LLM call. `sudo hire archi` / `open the pod bay doors` / `who are you really` → authored replies with trailing ■ marker. Wordings are drafts — Archi edits freely in the one map at the top of the file.
+
+**Egg 3 — delightful 404** (`app/not-found.tsx`): ink bg, orange mono "■ SIGNAL LOST", giant mono 404, "ROUTE NOT ON MANIFEST", orange "RETURN TO CONSOLE" button → `/`. Static; no game.
+
+**Egg 4 — console message** (`HomeClient.tsx` useEffect, once): styled `%c` log — "■ You're poking around the machine room." / "Like what you see? → /contact" / "psst — the orange square keeps count." Intentional discoverability hint for egg 1.
+
+**Egg 5 — /colophon** (`app/colophon/page.tsx`): static build-manifest page (typeface, palette, stack, motion, cookies rows). Undocumented — no nav link; found via console hint or guessing.
+
+**Constraints (locked):**
+- Suggested-question chips must NEVER list egg phrases or slash commands as discovery.
+- Scripted replies (egg 2, /help) bypass the LLM path entirely → they can never trip the BAD_RESPONSE leak guard.
+- Motion: menu instant/≤100ms; row highlight = color change only; card/button = 100ms mechanical press. Rejected patterns (cursor spotlight, streaming beam, shine sweep, pulsing dot, typewriter loop, bounce easing) stay rejected.
+- Files Affected: `frontend/app/components/chat/{slashCommands.ts,secretPhrases.ts,SlashMenu.tsx,ChatDock.tsx,HomeClient.tsx,HeroHeadline.tsx}`, `frontend/app/not-found.tsx`, `frontend/app/colophon/page.tsx`.
+- Verification Command: `npm run build` green + manual interaction check (type `/`, 5× click ■, secret phrase, unknown route, DevTools console, /colophon).
+
+
 ---
 
 ## Agent Handoff Prompt (Step 6 SDD)

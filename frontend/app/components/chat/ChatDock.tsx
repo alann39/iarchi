@@ -1,10 +1,18 @@
 'use client';
 
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowUp, Download, LoaderCircle, Mail} from 'lucide-react';
 import {toast} from 'sonner';
 
 import type {ChatMessage, ToolEvent} from './types';
+import {SlashMenu} from './SlashMenu';
+import {
+  buildHelpText,
+  filterSlashCommands,
+  matchSlashCommand,
+  type SlashCommand,
+} from './slashCommands';
+import {matchSecretPhrase} from './secretPhrases';
 
 export interface ChatDockProps {
   /** Conversation history, sent as API context on every request. */
@@ -30,6 +38,16 @@ export interface ChatDockProps {
    * the in-flight empty assistant placeholder in history → API 400.
    */
   busy?: boolean;
+  /**
+   * P3 slash commands (specs/04-TASKS.md TASK-16). Intercept order in
+   * handleSend is: slash → secret phrase → LLM.
+   */
+  /** Prompt slash command — parent streams the answer (hidden-prompt pattern). */
+  onSlashPrompt?: (apiText: string, displayText: string) => void;
+  /** Scripted reply (secret phrase, /help) — parent appends the authored pair, no LLM. */
+  onScriptedReply?: (userText: string, replyText: string) => void;
+  /** /clear — parent wipes the conversation. */
+  onClearChat?: () => void;
 }
 
 const PLACEHOLDERS = [
@@ -126,6 +144,9 @@ export function ChatDock({
   cvUrl,
   contactEmail,
   busy = false,
+  onSlashPrompt,
+  onScriptedReply,
+  onClearChat,
 }: ChatDockProps) {
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
@@ -133,6 +154,32 @@ export function ChatDock({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // --- P3 slash menu state --------------------------------------------------
+  // Opens when the input starts with `/` and has no space yet; filters on the
+  // query after `/`. The parent owns nothing here — the dock intercepts.
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+  const [slashActive, setSlashActive] = useState(0);
+  const slashMatches = useMemo(() => filterSlashCommands(slashQuery), [slashQuery]);
+
+  const clearInput = useCallback(() => {
+    setValue('');
+    setSlashOpen(false);
+    setSlashQuery('');
+    setSlashActive(0);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+  }, []);
+
+  const syncSlashState = useCallback((next: string) => {
+    if (next.startsWith('/') && !/\s/.test(next)) {
+      setSlashOpen(true);
+      setSlashQuery(next.slice(1));
+      setSlashActive(0);
+    } else {
+      setSlashOpen(false);
+    }
+  }, []);
 
   // Combined busy state: own send OR an externally-started stream (chip /
   // full-story / retry). The dock must not send while either is in flight.
@@ -205,12 +252,55 @@ export function ChatDock({
     window.location.href = `mailto:${contactEmail}?subject=${subject}`;
   }, [contactEmail]);
 
+  // P3: run a matched slash command. Prompt class → parent streams the
+  // answer; action class → deterministic client-side effect, no LLM.
+  const runSlashCommand = useCallback(
+    (cmd: SlashCommand) => {
+      clearInput();
+      if (cmd.class === 'prompt') {
+        onSlashPrompt?.(cmd.apiText, cmd.displayText);
+        return;
+      }
+      switch (cmd.name) {
+        case 'cv':
+          handleDownloadCV();
+          break;
+        case 'contact':
+          handleLetsTalk();
+          break;
+        case 'clear':
+          onClearChat?.();
+          break;
+        case 'help':
+          onScriptedReply?.('/help', buildHelpText());
+          break;
+        default:
+          break;
+      }
+    },
+    [clearInput, handleDownloadCV, handleLetsTalk, onClearChat, onScriptedReply, onSlashPrompt],
+  );
+
   const handleSend = useCallback(async () => {
     const text = value.trim();
     if (!text || isBusy) return;
+
+    // P3 intercept order: slash → secret phrase → LLM. Anything intercepted
+    // never reaches the API (so scripted replies can't trip BAD_RESPONSE).
+    const slash = matchSlashCommand(text);
+    if (slash) {
+      runSlashCommand(slash);
+      return;
+    }
+    const secret = matchSecretPhrase(text);
+    if (secret) {
+      clearInput();
+      onScriptedReply?.(text, secret);
+      return;
+    }
+
     onUserSend(text);
-    setValue('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    clearInput();
     setSending(true);
 
     const controller = new AbortController();
@@ -245,7 +335,7 @@ export function ChatDock({
     } finally {
       abortRef.current = null;
     }
-  }, [value, isBusy, messages, onUserSend, onDelta, onTool, onDone, fail]);
+  }, [value, isBusy, messages, onUserSend, onDelta, onTool, onDone, fail, clearInput, runSlashCommand, onScriptedReply]);
 
   // Abort in-flight request on unmount.
   useEffect(() => {
@@ -299,6 +389,34 @@ export function ChatDock({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // P3: menu keyboard — ↑/↓ navigate, Tab/Enter run, Esc dismisses (draft kept).
+    const menuActive = slashOpen && slashMatches.length > 0;
+    if (menuActive) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashActive((i) => (i + 1) % slashMatches.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashActive((i) => (i - 1 + slashMatches.length) % slashMatches.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        runSlashCommand(slashMatches[slashActive]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashOpen(false);
+        return;
+      }
+    } else if (e.key === 'Escape' && slashOpen) {
+      // Menu open but no matches (unknown /foo) — Esc just closes it.
+      setSlashOpen(false);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
@@ -310,6 +428,16 @@ export function ChatDock({
       ref={dockRef}
       className="fixed bottom-6 left-1/2 z-40 w-[min(680px,calc(100%-32px))] -translate-x-1/2 max-[1100px]:bottom-0 max-[1100px]:left-0 max-[1100px]:w-full max-[1100px]:translate-x-0"
     >
+      {/* P3 slash menu — floats above the composer. `fixed` on the parent
+          establishes the positioning context. */}
+      {slashOpen && (
+        <SlashMenu
+          commands={slashMatches}
+          activeIndex={slashActive}
+          onSelect={runSlashCommand}
+          onHover={setSlashActive}
+        />
+      )}
       <div className="flex items-center gap-2 rounded-full border border-[rgba(16,20,24,0.08)] bg-[rgba(255,255,255,0.72)] py-2 pl-2 pr-2 shadow-[0_8px_32px_rgba(16,20,24,0.08)] backdrop-blur-[16px] backdrop-saturate-[160%] max-[1100px]:rounded-[20px_20px_0_0] max-[1100px]:border-x-0 max-[1100px]:border-b-0 max-[1100px]:px-3 max-[1100px]:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
@@ -338,6 +466,7 @@ export function ChatDock({
           disabled={isBusy}
           onChange={(e) => {
             setValue(e.target.value);
+            syncSlashState(e.target.value);
             autosize();
           }}
           onKeyDown={handleKeyDown}
@@ -347,7 +476,15 @@ export function ChatDock({
         />
         <button
           type="button"
-          onClick={() => void handleSend()}
+          onClick={() => {
+            // P3: with the menu open, the send button confirms the
+            // highlighted command instead of sending partial text.
+            if (slashOpen && slashMatches.length > 0) {
+              runSlashCommand(slashMatches[slashActive]);
+            } else {
+              void handleSend();
+            }
+          }}
           disabled={!canSend}
           aria-label="Send message"
           className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-full transition-all duration-100 ${
