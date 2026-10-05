@@ -270,6 +270,20 @@ interface AccumulatedToolCall {
   arguments: string
 }
 
+/** Parse one SSE line into a chunk. Null for [DONE]/empty/malformed/non-data lines. */
+function parseSseLine(line: string): ChatCompletionChunk | null {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('data:')) return null
+  const data = trimmed.slice(5).trim()
+  if (data === '[DONE]' || data === '') return null
+  try {
+    return JSON.parse(data) as ChatCompletionChunk
+  } catch {
+    // Skip malformed lines — never crash the stream on provider quirks.
+    return null
+  }
+}
+
 async function* readSseChunks(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<ChatCompletionChunk, void, void> {
@@ -284,17 +298,16 @@ async function* readSseChunks(
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed.startsWith('data:')) continue
-        const data = trimmed.slice(5).trim()
-        if (data === '[DONE]' || data === '') continue
-        try {
-          yield JSON.parse(data) as ChatCompletionChunk
-        } catch {
-          // Skip malformed lines — never crash the stream on provider quirks.
-        }
+        const chunk = parseSseLine(line)
+        if (chunk) yield chunk
       }
     }
+    // A provider may end the stream without a trailing newline — don't drop
+    // the final data line (it can hold the last text delta or the tail of
+    // tool-call arguments, which would otherwise break JSON.parse downstream).
+    buffer += decoder.decode()
+    const tail = parseSseLine(buffer)
+    if (tail) yield tail
   } finally {
     reader.releaseLock()
   }
@@ -479,6 +492,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         let head = '' // cleaned-text head for leak detection (capped)
         let leakCheckedEarly = false
         let leaked = false
+        let producedOutput = false // any text delta or tool event sent downstream
         const LEAK_CHECK_AT = 200
         const HEAD_CAP = 600
 
@@ -497,6 +511,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }
               }
               send({type: 'text', delta: clean})
+              producedOutput = true
             }
           }
           for (const tc of delta.tool_calls ?? []) {
@@ -521,6 +536,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             leaked = true
           } else if (tail.length > 0) {
             send({type: 'text', delta: tail})
+            producedOutput = true
           }
         }
 
@@ -546,11 +562,21 @@ export async function POST(req: NextRequest): Promise<Response> {
             continue // Invalid args → skip tool, continue as text.
           }
           const executed = executeTool(tc.name, parsedArgs, portfolio)
-          if (executed) send({type: 'tool', ...executed})
+          if (executed) {
+            send({type: 'tool', ...executed})
+            producedOutput = true
+          }
         }
 
-        send({type: 'done'})
-        console.error('[chat] ok', {ms: Date.now() - startedAt})
+        if (!producedOutput) {
+          // Provider returned 200 but produced no text and no tool calls
+          // (hiccup / content filter). An empty bubble is worse than an
+          // honest error with a Retry affordance.
+          send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
+        } else {
+          send({type: 'done'})
+        }
+        console.log('[chat] ok', {ms: Date.now() - startedAt, producedOutput})
       } catch (e) {
         const isTimeout = e instanceof Error && e.name === 'AbortError'
         console.error('[chat] stream failed', {code: isTimeout ? 'timeout' : 'llm_error'})

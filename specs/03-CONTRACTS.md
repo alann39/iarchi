@@ -41,6 +41,8 @@ Content-Type: application/json
 
 **BAD_RESPONSE**: server mendeteksi chain-of-thought leak di stream (pola "thinking process" dsb.) → stream diabort, client **mengganti** partial content dengan pesan ramah + Retry (bukan menampilkannya).
 
+**Empty-response guard**: provider return 200 tapi tidak menghasilkan teks maupun tool call (hiccup / content filter) → server kirim `{type:"error", code:"LLM_ERROR"}` alih-alih `done`, supaya client menampilkan pesan ramah + Retry, bukan bubble kosong.
+
 ## 2. LLM Tools
 
 LLM hanya boleh memanggil tool berikut. Argumen di luar schema → diabaikan.
