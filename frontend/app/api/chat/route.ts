@@ -745,13 +745,39 @@ export async function POST(req: NextRequest): Promise<Response> {
             if (!r) return
             anyOutput = r.producedOutput
           } else {
+            // Story mode: append each section prompt as a user message, but
+            // MERGE with a trailing user message instead of creating
+            // consecutive user roles — Gemini's OpenAI-compatible endpoint
+            // 400s on those (observed 2026-10-06; normal mode was unaffected
+            // because its roles always alternate).
             const storyConvo: LlmMessage[] = [...convo]
+            const withSectionPrompt = (prompt: string): LlmMessage[] => {
+              const msgs = [...storyConvo]
+              const last = msgs[msgs.length - 1]
+              if (last && last.role === 'user') {
+                msgs[msgs.length - 1] = {role: 'user', content: `${last.content}\n\n${prompt}`}
+              } else {
+                msgs.push({role: 'user', content: prompt})
+              }
+              return msgs
+            }
+            const pushSectionPrompt = (prompt: string): void => {
+              const last = storyConvo[storyConvo.length - 1]
+              if (last && last.role === 'user') {
+                storyConvo[storyConvo.length - 1] = {
+                  role: 'user',
+                  content: `${last.content}\n\n${prompt}`,
+                }
+              } else {
+                storyConvo.push({role: 'user', content: prompt})
+              }
+            }
             for (const s of sections) {
               // One retry when the section comes back empty — the free tier
               // intermittently returns zero text for short prompts.
               let r: Awaited<ReturnType<typeof streamTurn>> | null = null
               for (let attempt = 0; attempt < 2; attempt++) {
-                r = await streamTurn([...storyConvo, {role: 'user', content: s.prompt}], {
+                r = await streamTurn(withSectionPrompt(s.prompt), {
                   tools: false,
                   maxTokens: 250,
                 })
@@ -760,10 +786,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
               if (!r) return
               anyOutput = anyOutput || r.producedOutput
-              storyConvo.push(
-                {role: 'user', content: s.prompt},
-                {role: 'assistant', content: r.text},
-              )
+              pushSectionPrompt(s.prompt)
+              storyConvo.push({role: 'assistant', content: r.text})
               const done = executeTool(s.tool, s.args, portfolio)
               if (done && toolHasItems(done.result)) {
                 const event: SseEvent = {type: 'tool', ...done, presentation: 'compact'}
