@@ -532,6 +532,15 @@ export async function POST(req: NextRequest): Promise<Response> {
   const llmBaseUrl: string = baseUrl
   const llmApiKey: string = apiKey
   const llmModel: string = model
+  // Auth-style switch: Google's OpenAI-compatible endpoint
+  // (generativelanguage.googleapis.com) rejects AI Studio keys sent as
+  // `Authorization: Bearer` with 401 — the key must go in `x-goog-api-key`
+  // instead (verified empirically 2026-10-06; never send both headers).
+  const llmAuthHeaders: Record<string, string> = /(^|\.)generativelanguage\.googleapis\.com/i.test(
+    llmBaseUrl,
+  )
+    ? {'x-goog-api-key': llmApiKey}
+    : {Authorization: `Bearer ${llmApiKey}`}
 
   // 5. Fetch portfolio + build system prompt (server-side only).
   // Dynamic imports: the Sanity client module throws at load time when its
@@ -589,7 +598,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${llmApiKey}`,
+              ...llmAuthHeaders,
             },
             body: JSON.stringify({
               model: llmModel,
