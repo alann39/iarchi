@@ -604,16 +604,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           if (!res.ok || !res.body) {
             console.error('[chat] LLM request failed', {status: res.status})
-            // TEMP-DEBUG 2026-10-06: surface upstream error to diagnose
-            // Gemini migration failures. Revert after diagnosis.
-            let detail = ''
-            try {
-              detail = (await res.text()).slice(0, 500)
-            } catch {
-              detail = '(unreadable)'
-            }
-            console.error('[chat] LLM upstream body', detail)
-            send({type: 'error', code: 'LLM_ERROR', message: `${FRIENDLY_LLM_ERROR} [debug ${res.status}: ${detail}]`})
+            send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
             return null
           }
 
