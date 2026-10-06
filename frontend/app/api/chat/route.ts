@@ -613,14 +613,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           if (!res.ok || !res.body) {
             console.error('[chat] LLM request failed', {status: res.status})
-            // TEMP-DEBUG 2026-10-06: diagnose story-mode failures
-            let detail = ''
-            try {
-              detail = (await res.text()).slice(0, 400)
-            } catch {
-              detail = '(unreadable)'
-            }
-            send({type: 'error', code: 'LLM_ERROR', message: `${FRIENDLY_LLM_ERROR} [dbg ${res.status}: ${detail}]`})
+            send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
             return null
           }
 
