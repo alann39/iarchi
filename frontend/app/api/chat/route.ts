@@ -725,7 +725,26 @@ export async function POST(req: NextRequest): Promise<Response> {
       }
 
       try {
-        const convo: LlmMessage[] = [{role: 'system', content: systemPrompt}, ...messages]
+        // Merge consecutive same-role messages — the client filters out
+        // empty-content messages (e.g. assistant tool-only turns), which can
+        // leave [user, user] sequences that Gemini's OpenAI endpoint 400s
+        // (verified 2026-10-09: "work history?" after a tool-only reply).
+        const mergeConsecutive = (msgs: LlmMessage[]): LlmMessage[] => {
+          const out: LlmMessage[] = []
+          for (const m of msgs) {
+            const last = out[out.length - 1]
+            if (last && last.role === m.role && last.role !== 'system') {
+              last.content = `${last.content}\n\n${m.content}`
+            } else {
+              out.push({...m})
+            }
+          }
+          return out
+        }
+        const convo: LlmMessage[] = mergeConsecutive([
+          {role: 'system', content: systemPrompt},
+          ...messages,
+        ])
         let anyOutput = false
 
         if (!storyMode) {
