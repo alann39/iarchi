@@ -773,11 +773,20 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
             }
             for (const s of sections) {
+              // P1 fix 2026-10-08 (error audit): the model was calling tools
+              // instead of writing prose — those calls are ignored
+              // server-side, leaving empty text. Instruct prose-only
+              // explicitly; when prose still comes back empty after the
+              // retry, skip it rather than poisoning history with an empty
+              // assistant message (the fan stack still renders — it is
+              // deterministic and server-owned).
+              const prosePrompt =
+                `${s.prompt}\n\nWrite only the prose for this section — do not call any tools. The cards for this section are added automatically.`
               // One retry when the section comes back empty — the free tier
               // intermittently returns zero text for short prompts.
               let r: Awaited<ReturnType<typeof streamTurn>> | null = null
               for (let attempt = 0; attempt < 2; attempt++) {
-                r = await streamTurn(withSectionPrompt(s.prompt), {
+                r = await streamTurn(withSectionPrompt(prosePrompt), {
                   tools: false,
                   maxTokens: 250,
                 })
@@ -785,9 +794,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                 if (r.text.trim().length > 0) break
               }
               if (!r) return
-              anyOutput = anyOutput || r.producedOutput
-              pushSectionPrompt(s.prompt)
-              storyConvo.push({role: 'assistant', content: r.text})
+              if (r.text.trim().length > 0) {
+                anyOutput = anyOutput || r.producedOutput
+                pushSectionPrompt(prosePrompt)
+                storyConvo.push({role: 'assistant', content: r.text})
+              } else {
+                console.error('[chat] story section prose empty after retry', {section: s.key})
+              }
               const done = executeTool(s.tool, s.args, portfolio)
               if (done && toolHasItems(done.result)) {
                 const event: SseEvent = {type: 'tool', ...done, presentation: 'compact'}

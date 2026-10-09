@@ -162,6 +162,8 @@ Chat-native delight + utility. Both live inside the existing chat — no new bac
 
 **Non-goals:** normal-mode chat rendering; Sanity schema changes; draft-preview wiring.
 
+**P1 story-prose fix (2026-10-08 error audit, uncommitted):** the model called tools instead of writing section prose — calls are ignored server-side → empty text, then an empty assistant message was pushed into history, poisoning later sections. Fix in `route.ts`: (1) append an explicit prose-only instruction to each section prompt ("Write only the prose for this section — do not call any tools. The cards for this section are added automatically."); (2) after 2 empty attempts, skip the prose (no empty assistant message in history) while the deterministic fan stack still renders. Tools stay included in the request per the 2026-10-05 anti-leak lesson (omit-tools entirely is the fallback if empty prose persists).
+
 **Constraints (locked):**
 - Design direction Machine Room + all rejections in 05-DESIGN-SYSTEM.md §7 stay enforced (detector-clean: no layout animation, no banned patterns).
 - Placeholders stay clearly marked; never invent personal data (icons are decorative, chosen by keyword — not facts).
