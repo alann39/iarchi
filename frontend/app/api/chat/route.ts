@@ -597,26 +597,44 @@ export async function POST(req: NextRequest): Promise<Response> {
         const aborter = new AbortController()
         const timeout = setTimeout(() => aborter.abort(), LLM_TIMEOUT_MS)
         try {
-          const res = await fetch(`${llmBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...llmAuthHeaders,
-            },
-            body: JSON.stringify({
-              model: llmModel,
-              messages: turnMessages,
-              tools: TOOLS,
-              tool_choice: 'auto',
-              stream: true,
-              max_tokens: opts?.maxTokens ?? MAX_OUTPUT_TOKENS,
-            }),
-            signal: aborter.signal,
-          })
+          // Exponential backoff on 429 (free-tier quota): 2s, 4s, 8s.
+          // Vercel functions are stateless so we can't throttle across
+          // invocations — retry is the defense.
+          let res: Response | null = null
+          for (let attempt = 0; attempt < 4; attempt++) {
+            res = await fetch(`${llmBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...llmAuthHeaders,
+              },
+              body: JSON.stringify({
+                model: llmModel,
+                messages: turnMessages,
+                tools: TOOLS,
+                tool_choice: 'auto',
+                stream: true,
+                max_tokens: opts?.maxTokens ?? MAX_OUTPUT_TOKENS,
+              }),
+              signal: aborter.signal,
+            })
+            if (res.status !== 429) break
+            if (attempt < 3) {
+              const delay = 2000 * Math.pow(2, attempt)
+              console.warn('[chat] LLM 429, backing off', {attempt, delayMs: delay})
+              await new Promise(r => setTimeout(r, delay))
+            }
+          }
+          const finalRes = res as Response
 
-          if (!res.ok || !res.body) {
-            console.error('[chat] LLM request failed', {status: res.status})
-            send({type: 'error', code: 'LLM_ERROR', message: FRIENDLY_LLM_ERROR})
+          if (!finalRes.ok || !finalRes.body) {
+            const code = finalRes.status === 429 ? 'RATE_LIMITED' : 'LLM_ERROR'
+            const message =
+              finalRes.status === 429
+                ? 'Hmm, too many requests at once. Mind waiting a moment and trying again?'
+                : FRIENDLY_LLM_ERROR
+            console.error('[chat] LLM request failed', {status: finalRes.status})
+            send({type: 'error', code, message})
             return null
           }
 
@@ -630,7 +648,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           const LEAK_CHECK_AT = 200
           const HEAD_CAP = 600
 
-          for await (const chunk of readSseChunks(res.body)) {
+          for await (const chunk of readSseChunks(finalRes.body)) {
             const delta = chunk.choices?.[0]?.delta
             if (!delta) continue
             if (typeof delta.content === 'string' && delta.content.length > 0) {
