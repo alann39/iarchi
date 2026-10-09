@@ -162,7 +162,9 @@ Chat-native delight + utility. Both live inside the existing chat — no new bac
 
 **Non-goals:** normal-mode chat rendering; Sanity schema changes; draft-preview wiring.
 
-**P1 story-prose fix (2026-10-08 error audit, uncommitted):** the model called tools instead of writing section prose — calls are ignored server-side → empty text, then an empty assistant message was pushed into history, poisoning later sections. Fix in `route.ts`: (1) append an explicit prose-only instruction to each section prompt ("Write only the prose for this section — do not call any tools. The cards for this section are added automatically."); (2) after 2 empty attempts, skip the prose (no empty assistant message in history) while the deterministic fan stack still renders. Tools stay included in the request per the 2026-10-05 anti-leak lesson (omit-tools entirely is the fallback if empty prose persists).
+**P1 story-prose fix (2026-10-08 error audit, pushed as b8076d7):** the model called tools instead of writing section prose — calls are ignored server-side → empty text, then an empty assistant message was pushed into history, poisoning later sections. Fix in `route.ts`: (1) explicit prose-only instruction per section prompt; (2) skip prose (no empty history message) after 2 empty attempts while the fan stack still renders.
+
+**Story template (2026-10-09, Archi's call):** LLM prose was garbled/cut off and inconsistent between runs → story mode is now fully deterministic with zero LLM calls. `STORY_SECTIONS` carries a static `narrative` string per section; the server streams narrative text interleaved with deterministic tools (prose, stack, prose, stack…). Edit the narrative strings in `route.ts` to change the story wording. Side benefit: story mode no longer burns Gemini free-tier quota.
 
 **Constraints (locked):**
 - Design direction Machine Room + all rejections in 05-DESIGN-SYSTEM.md §7 stay enforced (detector-clean: no layout animation, no banned patterns).

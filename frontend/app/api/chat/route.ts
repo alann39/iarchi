@@ -68,15 +68,18 @@ const MAX_OUTPUT_TOKENS = 800
  *
  * Observed 2026-10-05: the free-tier model cannot reliably follow multi-step
  * tool instructions (it echoed the story prompt verbatim and called zero
- * tools). So the SERVER owns the section order and runs the tools itself;
- * the LLM only writes short prose per section — its strength. Event order in
- * the stream is the document order: prose, stack, prose, stack…
+ * tools). So the SERVER owns the section order and runs the tools itself.
+ *
+ * 2026-10-09: narrative is now a static template (Archi's call) — LLM prose
+ * was garbled/cut off and inconsistent between runs. Zero LLM calls in story
+ * mode: server sends template text interleaved with deterministic tools.
+ * Edit the narrative strings below to change the story wording.
  */
 interface StorySection {
   key: string;
   tool: string;
   args: Record<string, unknown>;
-  prompt: string;
+  narrative: string;
 }
 
 const STORY_SECTIONS: StorySection[] = [
@@ -84,29 +87,29 @@ const STORY_SECTIONS: StorySection[] = [
     key: 'projects',
     tool: 'show_projects',
     args: {},
-    prompt:
-      "Open Archi's story: two vivid sentences about who he is and what drives him as a builder.",
+    narrative:
+      "I'm Archi — an accounting graduate who traded spreadsheets for software. What drives me is simple: I like building tools that solve real problems, the kind people actually open every day.",
   },
   {
     key: 'experience',
     tool: 'show_experience',
     args: {},
-    prompt:
-      'Continue the story: two sentences on his unusual path from accounting into software engineering.',
+    narrative:
+      "The path wasn't straight. I studied Computerized Accounting, worked in finance, and kept automating everything I touched — until one day the scripts became the job. Now I build full-time.",
   },
   {
     key: 'music',
     tool: 'show_taste',
     args: {category: 'music'},
-    prompt:
-      'Continue the story: one or two sentences on what his music taste reveals about him.',
+    narrative:
+      "My music taste probably explains my code: layered, rhythmic, a little obsessive about how the pieces fit. I gravitate toward stuff with intricate systems underneath.",
   },
   {
     key: 'movies',
     tool: 'show_taste',
     args: {category: 'movie'},
-    prompt:
-      'Close the story: one or two sentences on his favorite films, ending with a warm invitation to get in touch.',
+    narrative:
+      "Same energy in films — I love stories about outsiders who build their own way in. If any of this sounds like your kind of person, let's talk. You know where to find me.",
   },
 ];
 
@@ -745,62 +748,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             if (!r) return
             anyOutput = r.producedOutput
           } else {
-            // Story mode: append each section prompt as a user message, but
-            // MERGE with a trailing user message instead of creating
-            // consecutive user roles — Gemini's OpenAI-compatible endpoint
-            // 400s on those (observed 2026-10-06; normal mode was unaffected
-            // because its roles always alternate).
-            const storyConvo: LlmMessage[] = [...convo]
-            const withSectionPrompt = (prompt: string): LlmMessage[] => {
-              const msgs = [...storyConvo]
-              const last = msgs[msgs.length - 1]
-              if (last && last.role === 'user') {
-                msgs[msgs.length - 1] = {role: 'user', content: `${last.content}\n\n${prompt}`}
-              } else {
-                msgs.push({role: 'user', content: prompt})
-              }
-              return msgs
-            }
-            const pushSectionPrompt = (prompt: string): void => {
-              const last = storyConvo[storyConvo.length - 1]
-              if (last && last.role === 'user') {
-                storyConvo[storyConvo.length - 1] = {
-                  role: 'user',
-                  content: `${last.content}\n\n${prompt}`,
-                }
-              } else {
-                storyConvo.push({role: 'user', content: prompt})
-              }
-            }
+            // Story mode (2026-10-09): fully deterministic — no LLM calls.
+            // Template narrative interleaved with server-run tools, in
+            // document order: prose, stack, prose, stack…
             for (const s of sections) {
-              // P1 fix 2026-10-08 (error audit): the model was calling tools
-              // instead of writing prose — those calls are ignored
-              // server-side, leaving empty text. Instruct prose-only
-              // explicitly; when prose still comes back empty after the
-              // retry, skip it rather than poisoning history with an empty
-              // assistant message (the fan stack still renders — it is
-              // deterministic and server-owned).
-              const prosePrompt =
-                `${s.prompt}\n\nWrite only the prose for this section — do not call any tools. The cards for this section are added automatically.`
-              // One retry when the section comes back empty — the free tier
-              // intermittently returns zero text for short prompts.
-              let r: Awaited<ReturnType<typeof streamTurn>> | null = null
-              for (let attempt = 0; attempt < 2; attempt++) {
-                r = await streamTurn(withSectionPrompt(prosePrompt), {
-                  tools: false,
-                  maxTokens: 250,
-                })
-                if (!r) return // error event already sent — end the stream
-                if (r.text.trim().length > 0) break
-              }
-              if (!r) return
-              if (r.text.trim().length > 0) {
-                anyOutput = anyOutput || r.producedOutput
-                pushSectionPrompt(prosePrompt)
-                storyConvo.push({role: 'assistant', content: r.text})
-              } else {
-                console.error('[chat] story section prose empty after retry', {section: s.key})
-              }
+              send({type: 'text', delta: s.narrative})
+              anyOutput = true
               const done = executeTool(s.tool, s.args, portfolio)
               if (done && toolHasItems(done.result)) {
                 const event: SseEvent = {type: 'tool', ...done, presentation: 'compact'}
