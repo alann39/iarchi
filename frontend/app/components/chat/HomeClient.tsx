@@ -250,10 +250,19 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
       setSending(true);
       // The in-flight assistant placeholder (content '') is UI-only — never
       // send it as API context (the API rejects empty content with 400).
+      // Tool-only assistant turns (empty content, has tools) get a placeholder
+      // so history keeps the turn — dropping them creates [user, user] which
+      // confuses the model into multi-tool calls that fail.
       return [
         ...prev
-          .filter((m) => m.content.length > 0)
-          .map((m) => ({role: m.role, content: m.content})),
+          .filter((m) => m.content.length > 0 || (m.tools && m.tools.length > 0))
+          .map((m) => ({
+            role: m.role,
+            content:
+              m.content.length > 0
+                ? m.content
+                : `[Displayed ${m.tools!.map((t) => t.name).join(', ')}]`,
+          })),
         {role: 'user' as const, content: trimmed},
       ];
     },
@@ -279,7 +288,10 @@ export function HomeClient({suggestedQuestions, cvUrl, contactEmail}: HomeClient
 
   const handleDockUserSend = useCallback(
     (text: string) => {
-      prepareSend(text);
+      // Natural-language story intent → route to story mode (deterministic
+      // template + fan stacks) instead of letting the LLM guess.
+      const isStoryRequest = /\b(full story|tell me your story|your life story|cerita(kan|in)?( lengkap| full)?|kisah hidup)\b/i.test(text)
+      prepareSend(text, undefined, isStoryRequest ? {mode: 'story'} : undefined)
     },
     [prepareSend],
   );

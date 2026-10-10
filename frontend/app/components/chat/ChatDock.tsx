@@ -85,11 +85,12 @@ async function postChat(
   history: {role: 'user' | 'assistant'; content: string}[],
   signal: AbortSignal,
   onEvent: (event: SseEvent) => void,
+  mode?: 'story',
 ): Promise<void> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({messages: history}),
+    body: JSON.stringify({messages: history, ...(mode ? {mode} : {})}),
     signal,
   });
 
@@ -306,13 +307,23 @@ export function ChatDock({
     const controller = new AbortController();
     abortRef.current = controller;
     // Never send the in-flight assistant placeholder (content '') as context —
-    // the API rejects empty content with 400.
+    // the API rejects empty content with 400. Tool-only turns get a
+    // placeholder so history keeps the turn (see HomeClient.prepareSend).
     const history = [
       ...messages
-        .filter((m) => m.content.length > 0)
-        .map((m) => ({role: m.role, content: m.content})),
+        .filter((m) => m.content.length > 0 || (m.tools && m.tools.length > 0))
+        .map((m) => ({
+          role: m.role,
+          content:
+            m.content.length > 0
+              ? m.content
+              : `[Displayed ${m.tools!.map((t) => t.name).join(', ')}]`,
+        })),
       {role: 'user' as const, content: text},
     ];
+    // Natural-language story intent → server story mode (must match
+    // HomeClient's handleDockUserSend detection for UI block rendering).
+    const isStoryRequest = /\b(full story|tell me your story|your life story|cerita(kan|in)?( lengkap| full)?|kisah hidup)\b/i.test(text);
     try {
       await postChat(history, controller.signal, (event) => {
         if (event.type === 'text' && event.delta) {
@@ -325,7 +336,7 @@ export function ChatDock({
         } else if (event.type === 'error') {
           fail(event.code ?? 'LLM_ERROR', event.message ?? FRIENDLY_NETWORK_ERROR);
         }
-      });
+      }, isStoryRequest ? 'story' : undefined);
     } catch {
       if (!controller.signal.aborted) {
         fail('NETWORK_ERROR', FRIENDLY_NETWORK_ERROR);

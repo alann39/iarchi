@@ -843,7 +843,6 @@ export async function POST(req: NextRequest): Promise<Response> {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
-      'X-Code-Version': '9046399-multi-fallback',
     },
   })
 }
