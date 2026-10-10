@@ -276,6 +276,71 @@ const TOOLS: ToolDefinition[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Deterministic tool intros — short lead-in sentences before card blocks.
+// No LLM: picked by tool + visitor language, with a few variations each.
+// Added 2026-10-10 (Archi's call): cards felt abrupt without an intro.
+// ---------------------------------------------------------------------------
+
+const TOOL_INTROS: Record<string, {id: string[]; en: string[]}> = {
+  show_profile: {
+    id: ['Kenalin, ini Archi:', 'Profil singkat Archi nih:'],
+    en: ['Meet Archi:', "Here's a quick intro to Archi:"],
+  },
+  show_projects: {
+    id: ['Nih proyek-proyek Archi:', 'Karya yang udah dia bangun:', 'Cek proyek Archi nih:'],
+    en: ["Here are Archi's projects:", "Check out what Archi's built:", "A look at Archi's work:"],
+  },
+  show_experience: {
+    id: ['Nih riwayat kerja Archi:', 'Perjalanan karir dia:', 'Pengalaman kerja Archi nih:'],
+    en: ["Here's Archi's work history:", "Where Archi's worked:", "Archi's experience at a glance:"],
+  },
+  show_skills: {
+    id: ['Skill-set Archi nih:', 'Kemampuan dia:'],
+    en: ["Archi's skills:", 'What Archi brings to the table:'],
+  },
+  show_contact: {
+    id: ['Nih cara hubungin Archi:', 'Kontak Archi di sini:'],
+    en: ["Here's how to reach Archi:", 'Get in touch:'],
+  },
+}
+
+const TASTE_INTROS: Record<string, {id: string[]; en: string[]}> = {
+  music: {
+    id: ['Selera musik Archi nih:', 'Yang lagi dia dengerin:'],
+    en: ["Archi's music taste:", "What's on Archi's playlist:"],
+  },
+  movie: {
+    id: ['Film favorit Archi:', 'Tontonan favorit dia nih:'],
+    en: ["Archi's favorite films:", 'Movies Archi loves:'],
+  },
+}
+
+/** Crude Indonesian detection via common particles/slang. */
+function isIndonesian(text: string): boolean {
+  return /\b(gue|gua|lo|lu|nih|dong|sih|kan|kok|deh|banget|kenalin|gimana|nggak|udah|kalo|kalau|yang|dan|untuk|dengan|bisa|mau)\b/i.test(
+    text,
+  )
+}
+
+/** Pick a deterministic intro for a tool call, or null if none defined. */
+function pickToolIntro(
+  tool: string,
+  args: Record<string, unknown>,
+  userText: string,
+): string | null {
+  const lang = isIndonesian(userText) ? 'id' : 'en'
+  let pool: string[] | undefined
+  if (tool === 'show_taste') {
+    const cat = typeof args.category === 'string' ? args.category : 'music'
+    pool = (TASTE_INTROS[cat] ?? TASTE_INTROS.music)[lang]
+  } else {
+    pool = TOOL_INTROS[tool]?.[lang]
+  }
+  if (!pool || pool.length === 0) return null
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
+// ---------------------------------------------------------------------------
 // Server-side tool execution — from already-fetched portfolio data.
 // The LLM never supplies data, only the tool name + args.
 // ---------------------------------------------------------------------------
@@ -738,6 +803,21 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
             const done = executeTool(tc.name, parsedArgs, portfolio)
             if (done) {
+              // Deterministic intro before the card (2026-10-10): only when
+              // the LLM didn't write its own lead-in text this turn.
+              if (!storyMode && text.trim().length === 0) {
+                const lastUser = [...turnMessages].reverse().find((m) => m.role === 'user')
+                const intro = pickToolIntro(
+                  tc.name,
+                  parsedArgs as Record<string, unknown>,
+                  typeof lastUser?.content === 'string' ? lastUser.content : '',
+                )
+                if (intro) {
+                  send({type: 'text', delta: intro + '\n\n'})
+                  text += intro + '\n\n'
+                  producedOutput = true
+                }
+              }
               const callId = tc.id || `call_${Date.now()}_${i}`
               const event: SseEvent = storyMode
                 ? {type: 'tool', ...done, presentation: 'compact'}
