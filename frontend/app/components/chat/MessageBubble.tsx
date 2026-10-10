@@ -6,6 +6,7 @@ import {Check, Copy, RotateCcw} from 'lucide-react';
 import {StoryFan} from './fan/StoryFan';
 import {renderMarkdown} from './markdown';
 import {ToolRenderer} from './ToolRenderer';
+import {AgentProgress} from '../ui/agent-progress';
 import type {ChatMessage} from './types';
 
 export interface MessageBubbleProps {
@@ -84,6 +85,13 @@ export function MessageBubble({message, avatarInitial = 'A', onRetry}: MessageBu
   // to the plain content path so the friendly message + Retry still show.
   const storyBlocks = message.story && !isError ? message.blocks : undefined;
 
+  // Loading state: streaming but nothing to show yet (LLM still thinking).
+  const hasVisibleContent =
+    message.content.trim().length > 0 ||
+    (message.tools?.length ?? 0) > 0 ||
+    (storyBlocks?.length ?? 0) > 0;
+  const showProgress = isStreaming && !hasVisibleContent;
+
   return (
     <div className="group flex gap-2.5">
       <div
@@ -94,7 +102,9 @@ export function MessageBubble({message, avatarInitial = 'A', onRetry}: MessageBu
       </div>
       <div className="min-w-0 flex-1">
         <div className="space-y-3 text-[15px] leading-[1.65] text-[rgba(16,20,24,0.88)]">
-          {storyBlocks && storyBlocks.length > 0 ? (
+          {showProgress ? (
+            <AgentProgress />
+          ) : storyBlocks && storyBlocks.length > 0 ? (
             <>
               {storyBlocks.map((block, i) =>
                 block.kind === 'text' ? (
