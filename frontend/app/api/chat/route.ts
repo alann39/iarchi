@@ -535,6 +535,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   const llmBaseUrl: string = baseUrl
   const llmApiKey: string = apiKey
   const llmModel: string = model
+  // Fallback model for 429s — quotas are per-model on the free tier, so a
+  // second model gets a fresh bucket. Optional env, defaults to Flash-Lite.
+  const llmFallbackModel: string = process.env.LLM_FALLBACK_MODEL || 'gemini-3.5-flash-lite'
   // Auth-style switch: Google's OpenAI-compatible endpoint
   // (generativelanguage.googleapis.com) rejects AI Studio keys sent as
   // `Authorization: Bearer` with 401 — the key must go in `x-goog-api-key`
@@ -597,35 +600,45 @@ export async function POST(req: NextRequest): Promise<Response> {
         const aborter = new AbortController()
         const timeout = setTimeout(() => aborter.abort(), LLM_TIMEOUT_MS)
         try {
-          // Exponential backoff on 429 (free-tier quota): 2s, 4s, 8s.
-          // Vercel functions are stateless so we can't throttle across
-          // invocations — retry is the defense.
+          // Model rotation on 429: free-tier quotas are per-model, so the
+          // fallback gets a fresh bucket. Per model: exponential backoff
+          // 2s, 4s, 8s (max 3 retries). Vercel is stateless so retry —
+          // not cross-invocation throttling — is the defense.
+          const models = [llmModel, llmFallbackModel].filter((m, i, a) => m && a.indexOf(m) === i)
           let res: Response | null = null
-          for (let attempt = 0; attempt < 4; attempt++) {
-            res = await fetch(`${llmBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...llmAuthHeaders,
-              },
-              body: JSON.stringify({
-                model: llmModel,
-                messages: turnMessages,
-                tools: TOOLS,
-                tool_choice: 'auto',
-                stream: true,
-                max_tokens: opts?.maxTokens ?? MAX_OUTPUT_TOKENS,
-              }),
-              signal: aborter.signal,
-            })
-            if (res.status !== 429) break
-            if (attempt < 3) {
-              const delay = 2000 * Math.pow(2, attempt)
-              console.warn('[chat] LLM 429, backing off', {attempt, delayMs: delay})
-              await new Promise(r => setTimeout(r, delay))
+          let usedModel = models[0]
+          outer: for (const m of models) {
+            usedModel = m
+            for (let attempt = 0; attempt < 4; attempt++) {
+              res = await fetch(`${llmBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...llmAuthHeaders,
+                },
+                body: JSON.stringify({
+                  model: m,
+                  messages: turnMessages,
+                  tools: TOOLS,
+                  tool_choice: 'auto',
+                  stream: true,
+                  max_tokens: opts?.maxTokens ?? MAX_OUTPUT_TOKENS,
+                }),
+                signal: aborter.signal,
+              })
+              if (res.status !== 429) break outer
+              if (attempt < 3) {
+                const delay = 2000 * Math.pow(2, attempt)
+                console.warn('[chat] LLM 429, backing off', {model: m, attempt, delayMs: delay})
+                await new Promise(r => setTimeout(r, delay))
+              }
             }
+            console.warn('[chat] LLM 429 persisted, trying fallback model', {from: m})
           }
           const finalRes = res as Response
+          if (usedModel !== llmModel) {
+            console.warn('[chat] served by fallback model', {model: usedModel})
+          }
 
           if (!finalRes.ok || !finalRes.body) {
             const code = finalRes.status === 429 ? 'RATE_LIMITED' : 'LLM_ERROR'
