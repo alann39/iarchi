@@ -105,9 +105,6 @@ export function SiteHeader({socialLinks}: {socialLinks: ContactData[]}) {
           </Link>
         </nav>
       </div>
-      <div className="mx-auto w-full max-w-[720px] px-5 pb-2.5">
-        <p className={`${MONO} text-[11px] uppercase tracking-[0.12em] text-muted`}>Archi.dev — Portfolio</p>
-      </div>
       <div aria-hidden="true" className="h-px bg-hairline" />
     </header>
   );
