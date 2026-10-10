@@ -535,9 +535,14 @@ export async function POST(req: NextRequest): Promise<Response> {
   const llmBaseUrl: string = baseUrl
   const llmApiKey: string = apiKey
   const llmModel: string = model
-  // Fallback model for 429s — quotas are per-model on the free tier, so a
-  // second model gets a fresh bucket. Optional env, defaults to Flash-Lite.
-  const llmFallbackModel: string = process.env.LLM_FALLBACK_MODEL || 'gemini-3.5-flash-lite'
+  // Fallback chain for 429s — quotas are per-model on the free tier, so each
+  // model gets a fresh bucket. Lite models have roomier limits. Optional env
+  // (comma-separated), defaults to the Flash-Lite family.
+  const llmFallbackModels: string[] = (process.env.LLM_FALLBACK_MODELS ||
+    'gemini-3.5-flash-lite,gemini-2.5-flash-lite,gemini-3.1-flash-lite')
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean)
   // Auth-style switch: Google's OpenAI-compatible endpoint
   // (generativelanguage.googleapis.com) rejects AI Studio keys sent as
   // `Authorization: Bearer` with 401 — the key must go in `x-goog-api-key`
@@ -604,7 +609,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // fallback gets a fresh bucket. Per model: exponential backoff
           // 2s, 4s, 8s (max 3 retries). Vercel is stateless so retry —
           // not cross-invocation throttling — is the defense.
-          const models = [llmModel, llmFallbackModel].filter((m, i, a) => m && a.indexOf(m) === i)
+          const models = [llmModel, ...llmFallbackModels].filter((m, i, a) => m && a.indexOf(m) === i)
           let res: Response | null = null
           let usedModel = models[0]
           outer: for (const m of models) {
